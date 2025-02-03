@@ -2,7 +2,7 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain.embeddings import SentenceTransformerEmbeddings
 from pymongo import MongoClient
 from langchain.schema import Document  # Import the Document class
-from config import MONGODB_URI, MONGODB_DATABASE_NAME, MONGODB_VECTOR_COLL_LANGCHAIN, MONGODB_VECTOR_INDEX  # Import the MongoDB URI and database name from the config file
+from config.config import MONGODB_URI, MONGODB_DATABASE_NAME, MONGODB_VECTOR_COLL_LANGCHAIN  # Import the MongoDB URI and database name from the config file
 
 import ssl
 ssl._create_default_https_context = ssl._create_unverified_context

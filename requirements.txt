@@ -5,3 +5,9 @@ sentence-transformers
 pymongo
 requests
 python-dotenv
+pillow
+motor
+huggingface_hub
+flask
+dash
+dash_bootstrap_components

@@ -1,6 +1,6 @@
 from pymongo import MongoClient
 import re
-from config import MONGODB_URI, MONGODB_DATABASE_NAME  # Import the MongoDB URI and database name from the config file
+from config.config import MONGODB_URI, MONGODB_DATABASE_NAME  # Import the MongoDB URI and database name from the config file
 
 # MongoDB connection
 client = MongoClient(MONGODB_URI)  # Use the imported MongoDB URI
