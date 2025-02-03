@@ -1,0 +1,7 @@
+beautifulsoup4
+langchain-community
+langchain
+sentence-transformers
+pymongo
+requests
+python-dotenv
