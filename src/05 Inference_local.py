@@ -27,7 +27,7 @@ db = client[MONGODB_DATABASE_NAME]
 collection = db[MONGODB_VECTOR_COLL_LANGCHAIN]
 
 # User query
-query = "What is pastrol policy?"
+query = "what is time table for year 7? Can you convert minutes in to days"
 embeddings = get_transformer_embedding(query)
 
 # Perform vector search using MongoDB
