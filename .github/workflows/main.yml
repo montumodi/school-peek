@@ -21,8 +21,9 @@ jobs:
           ssh -o StrictHostKeyChecking=no -tt root@provider.hurricane.akash.pub -p 31914 -i ~/.ssh/id_rsa << 'EOF'
             apt update -y
             apt install git -y
-            localectl set-locale LANG=en_GB.UTF-8
+            # localectl set-locale LANG=en_GB.UTF-8
             apt install python3 python3-pip python3-venv -y
+            rm -rf ada-llm
             git clone https://github.com/montumodi/ada-llm.git
             cd ada-llm
 
@@ -37,7 +38,7 @@ jobs:
             pip install -r requirements.txt
 
             # Run Streamlit in the background using nohup and redirect output
-            nohup streamlit run src/web_app/app.py > streamlit.log 2>&1 &
+            nohup streamlit run src/web_app/app.py --server.port 80 > streamlit.log 2>&1 &
             echo "Streamlit app started in the background. Check streamlit.log for output."
 
             # Optional: Add a check to ensure Streamlit started (e.g., check for a port being open)
