@@ -1,0 +1,27 @@
+name: SSH Deploy and Run Commands
+
+on: [workflow_dispatch]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up SSH key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          ssh-keyscan -H provider.hurricane.akash.pub >> ~/.ssh/known_hosts
+
+      - name: SSH into server, install packages, and run commands
+        run: |
+          ssh -o StrictHostKeyChecking=no -tt root@provider.hurricane.akash.pub -p 31914 -i ~/.ssh/id_rsa << 'EOF'
+            apt update
+            apt install git
+            whoami
+            uptime
+            echo "Deployment completed successfully!"
+          EOF
