@@ -1,65 +1,80 @@
 from pymongo import MongoClient
-from langchain.embeddings import SentenceTransformerEmbeddings   # Changed import to HuggingFaceEmbeddings
-
-from langchain.embeddings import SentenceTransformerEmbeddings
-from huggingface_hub import InferenceClient
-
-from pymongo import MongoClient
-from langchain.schema import Document  # Import the Document class
-from config.config import MONGODB_URI, MONGODB_DATABASE_NAME, MONGODB_VECTOR_COLL_LANGCHAIN, HF_TOKEN  # Import the MongoDB URI and database name from the config file
-
+import torch
+from transformers import AutoModel, AutoTokenizer
 import ssl
+from huggingface_hub import InferenceClient
+from config.config import MONGODB_URI, MONGODB_DATABASE_NAME, MONGODB_VECTOR_COLL_LANGCHAIN, HF_TOKEN
+
+# Disable SSL verification if needed
 ssl._create_default_https_context = ssl._create_unverified_context
 
-# MongoDB connection
+# Load a transformer model that generates 384-dimensional embeddings
+model_name = "sentence-transformers/all-MiniLM-L6-v2"
+tokenizer = AutoTokenizer.from_pretrained(model_name)
+model = AutoModel.from_pretrained(model_name)
 
-client = MongoClient(MONGODB_URI, appname="web_content_embedding")  # Replace with your MongoDB URI if needed
-db = client[MONGODB_DATABASE_NAME]  # Replace with your database name
-collection = client.get_database(MONGODB_DATABASE_NAME).get_collection(MONGODB_VECTOR_COLL_LANGCHAIN)
+# Function to generate 384D embeddings
+def get_transformer_embedding(text):
+    inputs = tokenizer(text, return_tensors="pt", truncation=True, padding=True)
+    with torch.no_grad():
+        outputs = model(**inputs)
+    embedding = outputs.last_hidden_state.mean(dim=1).squeeze().numpy()  # Mean pooling
+    return embedding.tolist()  # Convert to list for MongoDB compatibility
+
+# MongoDB connection
+client = MongoClient(MONGODB_URI, appname="web_content_embedding")
+db = client[MONGODB_DATABASE_NAME]
+collection = db[MONGODB_VECTOR_COLL_LANGCHAIN]
 
 # User query
-query = "what is relevance between behavior incidents (negatives) and green card?"
+query = "What is pastrol policy?"
+embeddings = get_transformer_embedding(query)
 
-embedding_model = SentenceTransformerEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
-embeddings = embedding_model.embed_query(query)
-# print(query_embedding)
-# Perform vector search using MongoDB $near operator
+# Perform vector search using MongoDB
 results = collection.aggregate([
     {
-    "$vectorSearch": {
-      "index": "vector_index",
-      "path": "embedding",
-      "queryVector": embeddings,
-      "exact": True,
-      # "numCandidates": 5,
-      "limit": 1
+        "$vectorSearch": {
+            "index": "vector_index",
+            "path": "embedding",
+            "queryVector": embeddings,
+            "exact": True,
+            "limit": 1
+        }
     }
-  }
 ])
 
 # Retrieve matching documents
-documents = []
-for result in results:
-    documents.append(result['content'])
+documents = [result['content'] for result in results]
 
+# Convert retrieved documents into a string for LLM prompt
+context_string = " ".join(documents)
+prompt = f"""
+You are an AI assistant trained to provide answers based on official school information. 
+Use only the provided context to answer the question factually and concisely.
 
-# Specify search query, retrieve relevant documents, and convert to string
-context_docs = documents
-print(context_docs)
-context_string = " ".join([doc for doc in context_docs])
-# Construct prompt for the LLM using the retrieved documents as the context
-prompt = f"""Use the following pieces of context to answer the question at the end. Make sure answer in bullet points
-    {context_string}
-    Question: {query}
+Context:
+{context_string}
+
+Question: {query}
+
+Guidelines:
+- Respond using **only the given context** (do not guess).
+- If the answer is **not in the context**, reply: "I couldn't find relevant information on the school website."
+- Provide answers in **bullet points** for clarity.
+- If applicable, include **links or references** from the website.
+
+Answer:
 """
 
-# Authenticate to Hugging Face and access the model
-llm = InferenceClient(
-    "mistralai/Mistral-7B-Instruct-v0.3",
-    token = HF_TOKEN)
-# Prompt the LLM (this code varies depending on the model you use)
+
+# Authenticate and use Hugging Face inference API
+llm = InferenceClient("mistralai/Mistral-7B-Instruct-v0.3", token=HF_TOKEN)
+
+# Get response from LLM
 output = llm.chat_completion(
     messages=[{"role": "user", "content": prompt}],
     max_tokens=300
 )
+
+# Print response
 print(output.choices[0].message.content)
