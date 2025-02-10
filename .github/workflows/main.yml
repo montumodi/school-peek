@@ -19,9 +19,9 @@ jobs:
       - name: SSH into server, install packages, and run commands
         run: |
           ssh -o StrictHostKeyChecking=no -tt root@provider.hurricane.akash.pub -p 31914 -i ~/.ssh/id_rsa << 'EOF'
-          apt update
-          apt install git
-          whoami
-          uptime
-          echo "Deployment completed successfully!"
-        EOF
+            apt update
+            apt install git
+            whoami
+            uptime
+            echo "Deployment completed successfully!"
+          EOF
