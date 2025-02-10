@@ -25,6 +25,13 @@ jobs:
             apt install python3 python3-pip -y
             git clone https://github.com/montumodi/ada-llm.git
             cd ada-llm
+            if [ ! -d ".venv" ]; then
+              python3 -m venv .venv
+            elif [ ! -f ".venv/bin/activate" ]; then # Extra check for corrupted venv
+              rm -rf .venv  # Remove the potentially broken venv
+              python3 -m venv .venv # Recreate it
+            fi
+            source .venv/bin/activate
             pip install -r requirements.txt
             streamlit run src/web_app/app.py
             echo "Deployment completed successfully!"
