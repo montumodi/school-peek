@@ -6,5 +6,6 @@ requests
 python-dotenv
 pillow
 motor
+torch
 huggingface_hub
 streamlit
