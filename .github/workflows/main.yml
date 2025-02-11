@@ -36,7 +36,8 @@ jobs:
             source .venv/bin/activate
             pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu  # Technically, the index-url here is redundant but good for clarity in the file.
             pip install -r requirements.txt
-
+            export MONGODB_URI="${{ secrets.MONGODB_URI }}"
+            export HF_TOKEN "${{ secrets.HF_TOKEN }}"
             # Run Streamlit in the background using nohup and redirect output
             nohup streamlit run src/web_app/app.py --server.port 80 > streamlit.log 2>&1 &
             echo "Streamlit app started in the background. Check streamlit.log for output."
