@@ -34,7 +34,7 @@ jobs:
               python3 -m venv .venv
             fi
             source .venv/bin/activate
-            pip instll torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu  # Technically, the index-url here is redundant but good for clarity in the file.
+            pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu  # Technically, the index-url here is redundant but good for clarity in the file.
             pip install -r requirements.txt
 
             # Run Streamlit in the background using nohup and redirect output
