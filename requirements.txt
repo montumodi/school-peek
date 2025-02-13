@@ -9,3 +9,5 @@ motor
 transformers
 huggingface_hub
 streamlit
+pypdf
+flask
