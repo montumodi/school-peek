@@ -1,10 +1,7 @@
-from pymongo import MongoClient
-import re
-from config.config import MONGODB_URI, MONGODB_DATABASE_NAME  # Import the MongoDB URI and database name from the config file
+from utils.mongo_utils import get_mongo_client, get_mongo_db
 
-# MongoDB connection
-client = MongoClient(MONGODB_URI)  # Use the imported MongoDB URI
-db = client[MONGODB_DATABASE_NAME]  # Use the imported database name
+client = get_mongo_client()
+db = get_mongo_db(client)
 
 documents = db.scraped_data.find()
 

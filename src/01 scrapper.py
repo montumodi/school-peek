@@ -2,26 +2,23 @@ from urllib.parse import urljoin
 import bs4
 import os
 from langchain_community.document_loaders import WebBaseLoader, PyPDFLoader
-from pymongo import MongoClient
 import requests
 import tempfile
-from config.config import MONGODB_URI, MONGODB_DATABASE_NAME  # Import the MongoDB URI and database name from the config file
+from utils.mongo_utils import get_mongo_client, get_mongo_db
+from config.config import MONGODB_URI, MONGODB_DATABASE_NAME
 
-# MongoDB connection
-client = MongoClient(MONGODB_URI)  # Use the imported MongoDB URI
-db = client[MONGODB_DATABASE_NAME]  # Use the imported database name
+client = get_mongo_client()
+db = get_mongo_db(client)
 os.environ["USER_AGENT"] = "dummy user agent"
 
 bs4_strainer = bs4.SoupStrainer(class_="page-content")
 
 def download_pdf_with_timeout(pdf_url, timeout=300):
     response = requests.get(pdf_url, timeout=timeout)
-    response.raise_for_status()  # Raise an exception for HTTP errors
-
-    # Save the content to a temporary file
+    response.raise_for_status()
     with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as tmp_file:
         tmp_file.write(response.content)
-        tmp_file_path = tmp_file.name  # Store the path to the temporary file
+        tmp_file_path = tmp_file.name
     return tmp_file_path
 
 def find_content_and_insert_into_mongo(document):
@@ -62,30 +59,24 @@ def scrape_website_and_pdfs(base_url, db):
             print(f"Failed to fetch {url}: {e}")
             return
 
-        # Parse the page content
         soup = bs4.BeautifulSoup(response.text, "html.parser")
-
-        # Collect all PDF links
         pdf_links = []
         for tag in soup.find_all("a", href=True):
             link = urljoin(url, tag["href"])
             if link.endswith(".pdf") and link not in pdf_links:
                 pdf_links.append(link)
 
-        # If any PDFs are found, insert them into MongoDB
         find_content_and_insert_into_mongo({"page_url": url, "pdf_urls": pdf_links})
 
-        # Recursively find links to other pages
         for link_tag in soup.find_all("a", href=True):
             next_page = urljoin(url, link_tag["href"])
-            next_page = next_page.split("#")[0]  # Remove fragments
+            next_page = next_page.split("#")[0]
             if next_page not in visited and next_page.startswith(base_url):
                 scrape_page(next_page)
 
     scrape_page(base_url)
 
-# Example usage
 if __name__ == "__main__":
-    base_url = "https://adalovelace.org.uk"  # Replace with your target website
+    base_url = "https://adalovelace.org.uk"
     scrape_website_and_pdfs(base_url, db)
     print("Data has been inserted into MongoDB.")

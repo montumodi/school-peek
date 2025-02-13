@@ -1,36 +1,21 @@
 import sys
 import os
 import streamlit as st
-import torch
-from transformers import AutoModel, AutoTokenizer
-from pymongo import MongoClient
-from huggingface_hub import InferenceClient
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from config.config import MONGODB_URI, MONGODB_DATABASE_NAME, MONGODB_VECTOR_COLL_LANGCHAIN, HF_TOKEN
+from utils.mongo_utils import get_mongo_client, get_mongo_db
+from utils.embedding_utils import get_transformer_embedding
+from huggingface_hub import InferenceClient
 
-# Load transformer model for embeddings
-model_name = "sentence-transformers/all-MiniLM-L6-v2"
-tokenizer = AutoTokenizer.from_pretrained(model_name)
-model = AutoModel.from_pretrained(model_name)
+from config.config import HF_TOKEN, MONGODB_VECTOR_COLL_LANGCHAIN
 
-def get_transformer_embedding(text):
-    inputs = tokenizer(text, return_tensors="pt", truncation=True, padding=True)
-    with torch.no_grad():
-        outputs = model(**inputs)
-    embedding = outputs.last_hidden_state.mean(dim=1).squeeze().numpy()
-    return embedding.tolist()
-
-# MongoDB Connection
-client = MongoClient(MONGODB_URI, appname="web_content_embedding")
-db = client[MONGODB_DATABASE_NAME]
+client = get_mongo_client(app_name="web_content_embedding")
+db = get_mongo_db(client)
 collection = db[MONGODB_VECTOR_COLL_LANGCHAIN]
 
-# Hugging Face LLM Configuration
 HF_LLM_MODEL = "mistralai/Mistral-7B-Instruct-v0.3"
 
 def get_chat_response(query):
-    """Fetches response from MongoDB and Hugging Face LLM."""
     embeddings = get_transformer_embedding(query)
     
     results = collection.aggregate([
@@ -48,22 +33,34 @@ def get_chat_response(query):
     documents = [result['content'] for result in results]
     context_string = " ".join(documents) if documents else "No relevant documents found."
     
-    prompt = f"""Use the following context to answer the question:
-    {context_string}
-    Question: {query}
-    """
+    prompt = f"""
+You are an AI assistant trained to provide answers based on official school information. 
+Use only the provided context to answer the question factually and concisely.
+
+Context:
+{context_string}
+
+Question: {query}
+
+Guidelines:
+- Respond using **only the given context** (do not guess).
+- If the answer is **not in the context**, reply: "I couldn't find relevant information on the school website."
+- Provide answers in **bullet points** for clarity.
+- If applicable, include **links or references** from the website.
+
+Answer:
+"""
     
     llm = InferenceClient(HF_LLM_MODEL, token=HF_TOKEN)
     output = llm.chat_completion(
         messages=[{"role": "user", "content": prompt}],
         max_tokens=300,
-        stream=True  # Enable streaming
+        stream=True
     )
     
     for response in output:
         yield response.choices[0].delta.content if response.choices else ""
 
-# Streamlit UI
 st.title("Chat with AI")
 
 if "chat_history" not in st.session_state:
