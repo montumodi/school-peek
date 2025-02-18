@@ -18,4 +18,4 @@ RUN pip install --no-cache-dir -r requirements.txt
 EXPOSE 8501 8080
 
 # Start both the web app and API
-CMD ["sh", "-c", "streamlit run src/web_app/app_ollama.py --server.port 8501 & python src/api/server.py"]
+CMD ["sh", "-c", "streamlit run src/web_app/app.py --server.port 8501 & python src/api/server.py"]
