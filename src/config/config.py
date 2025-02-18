@@ -5,3 +5,4 @@ MONGODB_DATABASE_NAME = "ada"
 MONGODB_VECTOR_COLL_LANGCHAIN = "website_embeddings"
 MONGODB_VECTOR_INDEX = "vector_index"
 HF_TOKEN = os.environ["HF_TOKEN"]  # Read the Hugging Face token from the environment variable
+PORT = os.environ["PORT"]
