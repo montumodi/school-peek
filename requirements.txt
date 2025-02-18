@@ -12,3 +12,4 @@ streamlit
 pypdf
 flask
 pytesseract
+ollama
