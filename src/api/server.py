@@ -18,7 +18,7 @@ from utils.text_utils import remove_extra_lines_from_string
 from utils.embedding_utils import get_transformer_embedding
 
 
-from config.config import MONGODB_VECTOR_COLL_LANGCHAIN
+from config.config import MONGODB_VECTOR_COLL_LANGCHAIN, PORT
 
 app = Flask(__name__)
 
@@ -75,4 +75,4 @@ def upload_files():
     return jsonify(response)
 
 if __name__ == "__main__":
-    app.run(debug=True, host="0.0.0.0", port=8080)
+    app.run(debug=True, host="0.0.0.0", port=PORT)
