@@ -71,6 +71,11 @@ def upload_files():
         return jsonify({"error": "No files provided"}), 400
     
     files = request.files.getlist("files")
+    dry_run = request.args.get("dry_run", "false").lower() == "true"
+    
+    if dry_run:
+        return jsonify([{"filename": file.filename} for file in files])
+    
     response = [process_file(file) for file in files]
     return jsonify(response)
 
