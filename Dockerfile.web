@@ -4,15 +4,17 @@ FROM python:3.9-slim
 # Set the working directory in the container
 WORKDIR /app
 
-RUN apt-get update && apt-get install -y tesseract-ocr
+COPY requirements-web.txt .
 
-# Copy the current directory contents into the container at /app
-COPY . /app
+RUN apt-get update && apt-get install -y tesseract-ocr
 
 RUN pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu  # Technically, the index-url here is redundant but good for clarity in the file.
 
 # Install any needed packages specified in requirements.txt
 RUN pip install --no-cache-dir -r requirements-web.txt
+
+# Copy the current directory contents into the container at /app
+COPY . .
 
 # Expose ports for the web app and API
 EXPOSE 8501
