@@ -14,5 +14,8 @@ RUN pip install torch torchvision torchaudio --index-url https://download.pytorc
 # Install any needed packages specified in requirements.txt
 RUN pip install --no-cache-dir -r requirements-api.txt
 
+# Ensure entrypoint script is executable
+RUN chmod +x /app/entrypoint-api.sh
+
 # Start API
-CMD ["gunicorn", "-w", "1", "-b", "0.0.0.0:$PORT", "app:app"]
+CMD ["/app/entrypoint-api.sh"]
