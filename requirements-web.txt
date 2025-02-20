@@ -1,0 +1,13 @@
+beautifulsoup4
+langchain-community
+langchain
+pymongo
+requests
+python-dotenv
+pillow
+motor
+transformers
+huggingface_hub
+streamlit
+pypdf
+pytesseract
