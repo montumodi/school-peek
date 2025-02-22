@@ -1,11 +1,12 @@
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain.embeddings import SentenceTransformerEmbeddings
 from langchain.schema import Document
+import datetime
 import sys
 import os
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from utils.mongo_utils import get_mongo_client, get_mongo_db
+from utils.embedding_st_utils import get_transformer_embedding
 from config.config import MONGODB_VECTOR_COLL_LANGCHAIN
  
 client = get_mongo_client(app_name="web_content_embedding")
@@ -24,8 +25,7 @@ for document in documents:
     chunks = text_splitter.split_documents([document_obj])
     total += len(chunks)
 
-    embedding_model = SentenceTransformerEmbeddings(model_name="all-minilm")
-    embeddings = embedding_model.embed_documents([chunk.page_content for chunk in chunks])
+    embeddings = get_transformer_embedding([chunk.page_content for chunk in chunks])
 
     for chunk, embedding in zip(chunks, embeddings):
         collection.insert_one({
