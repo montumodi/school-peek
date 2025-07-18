@@ -1,22 +1,41 @@
 import sys
+import datetime
 import os
 import streamlit as st
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from utils.mongo_utils import get_mongo_client, get_mongo_db
-from utils.embedding_utils import get_transformer_embedding
-from huggingface_hub import InferenceClient
+import google.generativeai as genai
 
-from config.config import HF_TOKEN, MONGODB_VECTOR_COLL_LANGCHAIN
+from config.config import GEMINI_API_KEY, MONGODB_VECTOR_COLL_LANGCHAIN
 
 client = get_mongo_client(app_name="web_content_embedding")
 db = get_mongo_db(client)
 collection = db[MONGODB_VECTOR_COLL_LANGCHAIN]
 
-HF_LLM_MODEL = "mistralai/Mistral-7B-Instruct-v0.3"
+# Configure Gemini API
+genai.configure(api_key=GEMINI_API_KEY)
+model = genai.GenerativeModel('gemini-1.5-flash')
+
+def get_gemini_embedding(text):
+    """Get embeddings using Gemini's embedding model (768 dimensions)"""
+    try:
+        result = genai.embed_content(
+            model="models/text-embedding-004",
+            content=text,
+            task_type="retrieval_query"
+        )
+        return result['embedding']
+    except Exception as e:
+        print(f"Error generating Gemini embedding: {e}")
+        return None
 
 def get_chat_response(query):
-    embeddings = get_transformer_embedding(query)
+    embeddings = get_gemini_embedding(query)
+    
+    if embeddings is None:
+        yield "Error: Could not generate embeddings for your query."
+        return
     
     results = collection.aggregate([
         {
@@ -35,7 +54,7 @@ def get_chat_response(query):
     
     prompt = f"""
 You are an AI assistant trained to provide answers based on official school information. 
-Use only the provided context to answer the question factually and concisely.
+Use only the provided context to answer the question factually and concisely. Use today's date ({datetime.datetime.now()}) for any time-related information.
 
 Context:
 {context_string}
@@ -51,15 +70,21 @@ Guidelines:
 Answer:
 """
     
-    llm = InferenceClient(HF_LLM_MODEL, token=HF_TOKEN)
-    output = llm.chat_completion(
-        messages=[{"role": "user", "content": prompt}],
-        max_tokens=300,
-        stream=True
-    )
-    
-    for response in output:
-        yield response.choices[0].delta.content if response.choices else ""
+    try:
+        response = model.generate_content(
+            prompt,
+            generation_config=genai.types.GenerationConfig(
+                max_output_tokens=300,
+                temperature=0.1,
+            ),
+            stream=True
+        )
+        
+        for chunk in response:
+            if chunk.text:
+                yield chunk.text
+    except Exception as e:
+        yield f"Error generating response: {str(e)}"
 
 st.title("Chat with AI")
 

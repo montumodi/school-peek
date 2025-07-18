@@ -3,34 +3,97 @@ from langchain.schema import Document
 import datetime
 import sys
 import os
+import google.generativeai as genai
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from utils.mongo_utils import get_mongo_client, get_mongo_db
-from utils.embedding_st_utils import get_transformer_embedding
-from config.config import MONGODB_VECTOR_COLL_LANGCHAIN
+from config.config import MONGODB_VECTOR_COLL_LANGCHAIN, GEMINI_API_KEY
  
 client = get_mongo_client(app_name="web_content_embedding")
 db = get_mongo_db(client)
 collection = db[MONGODB_VECTOR_COLL_LANGCHAIN]
 
+# Configure Gemini API
+genai.configure(api_key=GEMINI_API_KEY)
+
+def get_gemini_embeddings(texts):
+    """Get embeddings for multiple texts using Gemini's embedding model (768 dimensions)"""
+    embeddings = []
+    for text in texts:
+        try:
+            result = genai.embed_content(
+                model="models/text-embedding-004",
+                content=text,
+                task_type="retrieval_document"  # Use retrieval_document for storing documents
+            )
+            embeddings.append(result['embedding'])
+            print(f"Generated embedding with {len(result['embedding'])} dimensions")
+        except Exception as e:
+            print(f"Error generating embedding for text: {e}")
+            # Skip this text if embedding fails
+            continue
+    return embeddings
+
 documents = db.scraped_data.find()
 total = 0
+processed = 0
+skipped = 0
+
+print("Starting embedding generation with Gemini text-embedding-004 (768 dimensions)...")
+
 for document in documents:
-    print(document["combined_text"])
+    processed += 1
+    document_id = document.get('_id')
+    print(f"Processing document {processed}: {document_id}")
+    
+    # Check if embeddings already exist for this document
+    existing_embeddings = collection.count_documents({
+        "source_document_id": document_id,
+        "embedding_model": "gemini-text-embedding-004"
+    })
+    
+    if existing_embeddings > 0:
+        print(f"Skipping document {document_id} - {existing_embeddings} embeddings already exist")
+        skipped += 1
+        continue
+    
+    print(f"Text preview: {document['combined_text'][:200]}...")
+    
     text_splitter = RecursiveCharacterTextSplitter(
-        chunk_size=1200, chunk_overlap=100, add_start_index=True
+        chunk_size=1000, chunk_overlap=100, add_start_index=True
     )
 
     document_obj = Document(page_content=document["combined_text"])
     chunks = text_splitter.split_documents([document_obj])
     total += len(chunks)
+    
+    print(f"Created {len(chunks)} chunks from document")
 
-    embeddings = get_transformer_embedding([chunk.page_content for chunk in chunks])
-
-    for chunk, embedding in zip(chunks, embeddings):
+    # Get embeddings for all chunks in this document
+    chunk_texts = [chunk.page_content for chunk in chunks]
+    embeddings = get_gemini_embeddings(chunk_texts)
+    
+    # Only process chunks that got embeddings successfully
+    successful_chunks = min(len(chunks), len(embeddings))
+    
+    for i in range(successful_chunks):
+        chunk = chunks[i]
+        embedding = embeddings[i]
+        
         collection.insert_one({
             "content": chunk.page_content,
             "embedding": embedding,
-            "datetime": datetime.datetime.now()
+            "datetime": datetime.datetime.now(),
+            "source_document_id": document.get("_id"),
+            "embedding_model": "gemini-text-embedding-004",
+            "embedding_dimensions": len(embedding)
         })
-print(total)
+    
+    print(f"Inserted {successful_chunks} chunks for document {processed}")
+
+print(f"Total documents processed: {processed}")
+print(f"Documents skipped (already had embeddings): {skipped}")
+print(f"New chunks processed: {total}")
+print("Embedding generation complete!")
+print("\nIMPORTANT: Your MongoDB vector index needs to be updated to support 768 dimensions.")
+print("Please update your vector search index configuration.")

@@ -1,3 +1,7 @@
+import os
+import sys
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
 from utils.mongo_utils import get_mongo_client, get_mongo_db
 
 client = get_mongo_client()

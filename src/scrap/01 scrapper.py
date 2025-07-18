@@ -1,25 +1,71 @@
 from urllib.parse import urljoin
 import bs4
+import sys
 import os
+import datetime
 from langchain_community.document_loaders import WebBaseLoader, PyPDFLoader
 import requests
 import tempfile
+import time
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
 from utils.mongo_utils import get_mongo_client, get_mongo_db
-from config.config import MONGODB_URI, MONGODB_DATABASE_NAME
 
 client = get_mongo_client()
 db = get_mongo_db(client)
-os.environ["USER_AGENT"] = "dummy user agent"
+os.environ["USER_AGENT"] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
 
 bs4_strainer = bs4.SoupStrainer(class_="page-content")
 
-def download_pdf_with_timeout(pdf_url, timeout=300):
-    response = requests.get(pdf_url, timeout=timeout)
-    response.raise_for_status()
-    with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as tmp_file:
-        tmp_file.write(response.content)
-        tmp_file_path = tmp_file.name
-    return tmp_file_path
+def download_pdf_with_timeout(pdf_url, timeout=300, max_retries=3, retry_delay=1):
+    """
+    Download a PDF with timeout and retry logic.
+    
+    Args:
+        pdf_url (str): URL of the PDF to download
+        timeout (int): Request timeout in seconds
+        max_retries (int): Maximum number of retry attempts
+        retry_delay (int): Delay between retries in seconds
+    
+    Returns:
+        str: Path to the downloaded temporary file, or None if skipped
+    
+    Raises:
+        requests.RequestException: If all retry attempts fail for retryable errors
+    """
+    # HTTP status codes that should not be retried (permanent failures)
+    non_retryable_status_codes = {400, 401, 403, 404, 410, 421, 422, 451}
+    
+    last_exception = None
+    
+    for attempt in range(max_retries + 1):
+        try:
+            response = requests.get(pdf_url, timeout=timeout)
+            response.raise_for_status()
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as tmp_file:
+                tmp_file.write(response.content)
+                tmp_file_path = tmp_file.name
+            return tmp_file_path
+        except requests.HTTPError as e:
+            # Check if it's a non-retryable HTTP error
+            if hasattr(e.response, 'status_code') and e.response.status_code in non_retryable_status_codes:
+                print(f"Skipping PDF due to non-retryable error {e.response.status_code}: {pdf_url}")
+                print(f"Error details: {e}")
+                return None
+            last_exception = e
+        except requests.RequestException as e:
+            last_exception = e
+        
+        # Only retry if we haven't hit max attempts and it's a retryable error
+        if attempt < max_retries:
+            print(f"Failed to download PDF (attempt {attempt + 1}/{max_retries + 1}): {last_exception}")
+            print(f"Retrying in {retry_delay} seconds...")
+            time.sleep(retry_delay)
+            # Exponential backoff: increase delay for next retry
+            retry_delay *= 2
+        else:
+            print(f"All retry attempts failed for PDF: {pdf_url}")
+            raise last_exception
 
 def find_content_and_insert_into_mongo(document):
     print(f"Page URL: {document['page_url']}")
@@ -34,13 +80,16 @@ def find_content_and_insert_into_mongo(document):
     if 'pdf_urls' in document and document['pdf_urls']:
         for pdf_url in document['pdf_urls']:
             print(f"PDF URLs: {pdf_url}")
-            pdf_loader = PyPDFLoader(
-                file_path=download_pdf_with_timeout(pdf_url)
-            )
-            pdfs.append({"url": pdf_url, "content": "\n".join(content.page_content for content in pdf_loader.load())})
+            pdf_file_path = download_pdf_with_timeout(pdf_url)
+            if pdf_file_path is not None:
+                pdf_loader = PyPDFLoader(file_path=pdf_file_path)
+                pdfs.append({"url": pdf_url, "content": "\n".join(content.page_content for content in pdf_loader.load())})
+            else:
+                print(f"Skipped PDF due to error: {pdf_url}")
         document["pdfs"] = pdfs
     del document['pdf_urls']
     del document['page_url']
+    document['timestamp'] = datetime.datetime.now()
     db.scraped_data.insert_one(document)
     print("inserted...")
 

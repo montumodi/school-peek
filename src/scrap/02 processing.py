@@ -1,8 +1,11 @@
-from utils.mongo_utils import get_mongo_client, get_mongo_db
-from utils.text_utils import remove_extra_lines_from_string
+import sys
+import os
 
-client = get_mongo_client()
-db = get_mongo_db(client)
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+from utils.text_utils import remove_extra_lines_from_string
+from utils.mongo_utils import get_mongo_client, get_mongo_db
+
+db = get_mongo_db(get_mongo_client())
 
 documents = db.scraped_data.find()
 
