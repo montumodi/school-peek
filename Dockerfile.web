@@ -4,11 +4,15 @@ FROM python:3.9-slim
 # Set the working directory in the container
 WORKDIR /app
 
+# Clean up Python cache files
+RUN find . -type d -name "__pycache__" -exec rm -rf {} + || true
+RUN find . -name "*.pyc" -delete || true
+
 COPY requirements-web.txt .
 
-RUN apt-get update && apt-get install -y tesseract-ocr
+RUN apt-get update
 
-RUN pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu  # Technically, the index-url here is redundant but good for clarity in the file.
+# RUN pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu  # Technically, the index-url here is redundant but good for clarity in the file.
 
 # Install any needed packages specified in requirements.txt
 RUN pip install --no-cache-dir -r requirements-web.txt

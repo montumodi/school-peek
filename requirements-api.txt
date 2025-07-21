@@ -2,8 +2,8 @@ langchain-community
 pymongo
 requests
 python-dotenv
-transformers
 pypdf
 flask
 pytesseract
 gunicorn
+google-generativeai

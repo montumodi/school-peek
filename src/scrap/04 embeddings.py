@@ -3,36 +3,15 @@ from langchain.schema import Document
 import datetime
 import sys
 import os
-import google.generativeai as genai
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from utils.mongo_utils import get_mongo_client, get_mongo_db
-from config.config import MONGODB_VECTOR_COLL_LANGCHAIN, GEMINI_API_KEY
+from utils.gemini_utils import get_gemini_embeddings
+from config.config import MONGODB_VECTOR_COLL_LANGCHAIN
  
 client = get_mongo_client(app_name="web_content_embedding")
 db = get_mongo_db(client)
 collection = db[MONGODB_VECTOR_COLL_LANGCHAIN]
-
-# Configure Gemini API
-genai.configure(api_key=GEMINI_API_KEY)
-
-def get_gemini_embeddings(texts):
-    """Get embeddings for multiple texts using Gemini's embedding model (768 dimensions)"""
-    embeddings = []
-    for text in texts:
-        try:
-            result = genai.embed_content(
-                model="models/text-embedding-004",
-                content=text,
-                task_type="retrieval_document"  # Use retrieval_document for storing documents
-            )
-            embeddings.append(result['embedding'])
-            print(f"Generated embedding with {len(result['embedding'])} dimensions")
-        except Exception as e:
-            print(f"Error generating embedding for text: {e}")
-            # Skip this text if embedding fails
-            continue
-    return embeddings
 
 documents = db.scraped_data.find()
 total = 0
