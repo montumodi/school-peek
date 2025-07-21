@@ -8,8 +8,6 @@ COPY requirements-api.txt .
 
 RUN apt-get update && apt-get install -y tesseract-ocr
 
-RUN pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu  # Technically, the index-url here is redundant but good for clarity in the file.
-
 # Install any needed packages specified in requirements.txt
 RUN pip install --no-cache-dir -r requirements-api.txt
 
