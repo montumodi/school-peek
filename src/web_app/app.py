@@ -96,38 +96,78 @@ def get_chat_response(query, chat_history=None):
         yield "Error: Could not generate embeddings for your query."
         return
     
+    # Improved vector search with better configuration
     results = collection.aggregate([
         {
             "$vectorSearch": {
                 "index": "vector_index",
                 "path": "embedding",
                 "queryVector": embeddings,
-                "exact": True,
-                "limit": 5  # Get more relevant documents for better context
+                "numCandidates": 50,  # Consider more candidates
+                "limit": 10,  # Retrieve more results initially
+                "exact": False  # Use approximate search for better performance
             }
+        },
+        {
+            "$addFields": {
+                "similarity_score": {
+                    "$meta": "vectorSearchScore"
+                }
+            }
+        },
+        {
+            "$match": {
+                "similarity_score": {"$gte": 0.7}  # Filter by relevance threshold
+            }
+        },
+        {
+            "$limit": 5  # Take top 5 after filtering
         }
     ])
     
-    documents = [result['content'] for result in results]
-    context_string = " ".join(documents) if documents else "No relevant documents found."
+    # Process results with metadata
+    relevant_docs = []
+    for result in results:
+        doc_info = {
+            "content": result['content'],
+            "score": result.get('similarity_score', 0),
+            "source": result.get('source', 'unknown'),
+            "source_id": str(result.get('source_document_id', ''))
+        }
+        relevant_docs.append(doc_info)
+    
+    # Build context with better structure
+    if not relevant_docs:
+        context_string = "No highly relevant documents found for this query."
+        yield "I don't have specific information about that topic from the school website. You may want to contact the school directly for more details."
+        return
+    
+    # Create structured context with source attribution
+    context_parts = []
+    for i, doc in enumerate(relevant_docs, 1):
+        source_info = f"[Source {i} - {doc['source']} (relevance: {doc['score']:.2f})]"
+        context_parts.append(f"{source_info}\n{doc['content']}")
+    
+    context_string = "\n\n".join(context_parts)
     
     # Build conversation history for context
     conversation_context = ""
     if chat_history and len(chat_history) > 1:
         conversation_context = "\n\nPrevious conversation:\n"
-        # Only include last 6 messages to avoid token limits
-        recent_history = chat_history[-6:]
+        # Only include last 4 messages to avoid token limits
+        recent_history = chat_history[-4:]
         for msg in recent_history[:-1]:  # Exclude current message
             role = "Human" if msg["sender"] == "user" else "Assistant"
             conversation_context += f"{role}: {msg['text']}\n"
     
     current_date = datetime.datetime.now().strftime("%B %d, %Y")
     
+    # Improved prompt with better instructions
     prompt = f"""You are a helpful AI assistant for Ada Lovelace School, designed to provide accurate information based on official school documentation and website content.
 
 **Today's Date:** {current_date}
 
-**School Context & Information:**
+**Relevant School Information (with source attribution):**
 {context_string}
 {conversation_context}
 
@@ -135,19 +175,23 @@ def get_chat_response(query, chat_history=None):
 
 **Instructions:**
 • **Primary Source**: Use ONLY the provided school context to answer questions
-• **Accuracy**: If information isn't in the context, clearly state "I don't have that specific information from the school website"
+• **Source Attribution**: When referencing information, mention which source it comes from (e.g., "According to the school website...")
+• **Accuracy**: If information isn't in the context, clearly state "I don't have that specific information from the school resources provided"
+• **Relevance Check**: Pay attention to similarity scores - higher scores indicate more relevant information
 • **Completeness**: Consider the conversation history to provide contextually relevant answers
 • **Clarity**: Structure responses with bullet points or numbered lists when appropriate
-• **Helpfulness**: If you can't answer fully, suggest what the user should do (e.g., "You may want to contact the school directly at...")
+• **Helpfulness**: If you can't answer fully, suggest specific actions (e.g., "You may want to contact the school office at [phone] or email [email]")
 • **Current Information**: When discussing dates, events, or time-sensitive information, reference today's date
 • **Conversational**: Be natural and engaging while maintaining professionalism
 
 **Response Guidelines:**
+- Prioritize information from higher-scoring sources
 - Be concise but comprehensive
 - Use clear formatting (bullet points, headings if needed)
-- Include relevant links or contact information when available
+- Include relevant contact information when available
 - Acknowledge previous questions in the conversation when relevant
-- If information is unclear or missing, say so honestly
+- If multiple sources provide conflicting information, mention this
+- If information seems outdated, note this limitation
 
 **Answer:**"""
     
@@ -155,8 +199,9 @@ def get_chat_response(query, chat_history=None):
         response = model.generate_content(
             prompt,
             generation_config=genai.types.GenerationConfig(
-                max_output_tokens=500,  # Increased for more detailed responses
-                temperature=0.2,  # Slightly higher for more natural responses
+                max_output_tokens=600,  # Increased for more detailed responses
+                temperature=0.1,  # Lower for more consistent responses
+                top_p=0.8,  # Add top_p for better quality
             ),
             stream=True
         )
