@@ -1,5 +1,0 @@
-pymongo
-requests
-python-dotenv
-streamlit
-google-generativeai

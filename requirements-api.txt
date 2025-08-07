@@ -1,9 +1,0 @@
-langchain-community
-pymongo
-requests
-python-dotenv
-pypdf
-flask
-pytesseract
-gunicorn
-google-generativeai

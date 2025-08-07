@@ -1,0 +1,13 @@
+flask
+google-generativeai
+google-generativeai
+pymongo
+gunicorn
+langchain-community
+pymongo
+pypdf
+pytesseract
+python-dotenv
+requests
+streamlit
+pytest
