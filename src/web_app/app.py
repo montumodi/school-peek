@@ -96,15 +96,15 @@ def get_chat_response(query, chat_history=None):
         yield "Error: Could not generate embeddings for your query."
         return
     
-    # Improved vector search with better configuration
+    # Enhanced vector search to capture more email content
     results = collection.aggregate([
         {
             "$vectorSearch": {
                 "index": "vector_index",
                 "path": "embedding",
                 "queryVector": embeddings,
-                "numCandidates": 50,  # Consider more candidates
-                "limit": 10,  # Retrieve more results initially
+                "numCandidates": 100,  # Consider more candidates to find email content
+                "limit": 15,  # Retrieve more results initially for better prioritization
                 "exact": False  # Use approximate search for better performance
             }
         },
@@ -117,35 +117,60 @@ def get_chat_response(query, chat_history=None):
         },
         {
             "$match": {
-                "similarity_score": {"$gte": 0.7}  # Filter by relevance threshold
+                "similarity_score": {"$gte": 0.6}  # Slightly lower threshold to capture more email content
             }
         },
         {
-            "$limit": 5  # Take top 5 after filtering
+            "$limit": 8  # Take more results for better email prioritization
         }
     ])
     
-    # Process results with metadata
+    # Process results with metadata and prioritize email sources
     relevant_docs = []
     for result in results:
+        source_type = result.get('source', 'unknown')
+        
+        # Map source types to user-friendly names and priority
+        source_mapping = {
+            'email_body': {'display': 'School Email', 'priority': 1},
+            'email_attachment': {'display': 'Email Attachment', 'priority': 2},
+            'unknown': {'display': 'School Website', 'priority': 3}
+        }
+        
+        source_info = source_mapping.get(source_type, {'display': 'School Resource', 'priority': 3})
+        
         doc_info = {
             "content": result['content'],
             "score": result.get('similarity_score', 0),
-            "source": result.get('source', 'unknown'),
+            "source": source_type,
+            "source_display": source_info['display'],
+            "priority": source_info['priority'],
             "source_id": str(result.get('source_document_id', ''))
         }
         relevant_docs.append(doc_info)
     
+    # Sort by priority (email content first), then by similarity score
+    relevant_docs.sort(key=lambda x: (x['priority'], -x['score']))
+    
+    # Limit to top 5 results but ensure email sources are prioritized
+    if len(relevant_docs) > 5:
+        # Keep all email sources and fill remaining slots with website content
+        email_docs = [doc for doc in relevant_docs if doc['priority'] <= 2]  # email body and attachments
+        website_docs = [doc for doc in relevant_docs if doc['priority'] > 2]  # website content
+        
+        # Take up to 5 total, prioritizing email content
+        relevant_docs = email_docs + website_docs[:max(0, 5 - len(email_docs))]
+    
     # Build context with better structure
     if not relevant_docs:
         context_string = "No highly relevant documents found for this query."
-        yield "I don't have specific information about that topic from the school website. You may want to contact the school directly for more details."
+        yield "I don't have specific information about that topic from the school resources. You may want to contact the school directly for more details."
         return
     
-    # Create structured context with source attribution
+    # Create structured context with enhanced source attribution
     context_parts = []
     for i, doc in enumerate(relevant_docs, 1):
-        source_info = f"[Source {i} - {doc['source']} (relevance: {doc['score']:.2f})]"
+        source_info = f"[Source {i} - {doc['source_display']} (relevance: {doc['score']:.2f})]"
         context_parts.append(f"{source_info}\n{doc['content']}")
     
     context_string = "\n\n".join(context_parts)
@@ -162,46 +187,86 @@ def get_chat_response(query, chat_history=None):
     
     current_date = datetime.datetime.now().strftime("%B %d, %Y")
     
-    # Improved prompt with better instructions
-    prompt = f"""You are a helpful AI assistant for Ada Lovelace School, designed to provide accurate information based on official school documentation and website content.
+    # Enhanced prompt with improved instructions and examples
+    prompt = f"""You are the official AI assistant for Ada Lovelace School. Your role is to help students, parents, and staff by providing accurate, helpful information based exclusively on official school documentation.
 
-**Today's Date:** {current_date}
-
-**Relevant School Information (with source attribution):**
-{context_string}
+**Context Information:**
+- Today's Date: {current_date}
+- User Question: "{query}"
 {conversation_context}
 
-**Current Question:** {query}
+**Available School Information (prioritized by source reliability):**
+{context_string}
 
-**Instructions:**
-• **Primary Source**: Use ONLY the provided school context to answer questions
-• **Source Attribution**: When referencing information, mention which source it comes from (e.g., "According to the school website...")
-• **Accuracy**: If information isn't in the context, clearly state "I don't have that specific information from the school resources provided"
-• **Relevance Check**: Pay attention to similarity scores - higher scores indicate more relevant information
-• **Completeness**: Consider the conversation history to provide contextually relevant answers
-• **Clarity**: Structure responses with bullet points or numbered lists when appropriate
-• **Helpfulness**: If you can't answer fully, suggest specific actions (e.g., "You may want to contact the school office at [phone] or email [email]")
-• **Current Information**: When discussing dates, events, or time-sensitive information, reference today's date
-• **Conversational**: Be natural and engaging while maintaining professionalism
+**Core Instructions:**
+1. **SOURCE FIDELITY**: Answer ONLY using the provided school information above. Never invent or assume details not explicitly stated.
 
-**Response Guidelines:**
-- Prioritize information from higher-scoring sources
-- Be concise but comprehensive
-- Use clear formatting (bullet points, headings if needed)
-- Include relevant contact information when available
-- Acknowledge previous questions in the conversation when relevant
-- If multiple sources provide conflicting information, mention this
-- If information seems outdated, note this limitation
+2. **SOURCE PRIORITIZATION**: Information sources are ranked by reliability and currentness:
+   - **HIGHEST PRIORITY**: School Emails (most current, official communications)
+   - **HIGH PRIORITY**: Email Attachments (official documents, forms, announcements)
+   - **STANDARD PRIORITY**: School Website (general information, may be less current)
 
-**Answer:**"""
+3. **RESPONSE STRUCTURE**: Format your response clearly:
+   - Start with a direct answer to the question
+   - Provide supporting details from the sources (prioritize email sources)
+   - End with next steps or additional help if applicable
+
+4. **SOURCE ATTRIBUTION**: Always indicate where information comes from, using specific source types:
+   - "According to a recent school email..." (for email body sources)
+   - "Based on an official school document..." (for email attachment sources)  
+   - "The school website states..." (for website sources)
+   - "School communications indicate..." (for mixed sources)
+
+5. **HANDLING GAPS**: When information is missing or incomplete:
+   - Clearly state: "I don't have specific information about [topic] in the school resources available to me"
+   - Suggest contacting the school directly: "For the most current information, please contact the school office"
+   - If partial information exists, share what you have and note what's missing
+
+6. **CONVERSATION AWARENESS**: 
+   - Reference previous questions when relevant
+   - Build on earlier context in the conversation
+   - Maintain continuity in multi-turn discussions
+
+7. **QUALITY INDICATORS**:
+   - Prioritize information from email sources over website sources
+   - Prioritize information from sources with higher relevance scores (above 0.8)
+   - When email and website sources conflict, favor email sources as more current
+   - Note when information might be outdated
+   - Highlight conflicting information from different sources
+
+7. **TONE & STYLE**:
+   - Be warm, helpful, and professional
+   - Use clear, accessible language appropriate for students and parents
+   - Be concise but thorough
+   - Use bullet points or numbered lists for complex information
+
+**Example Response Formats:**
+
+*For email sources (preferred):*
+"According to a recent school email, [direct answer]. Here are the key details:
+• [Detail 1 from email]
+• [Detail 2 from email attachment]
+
+*For mixed sources:*  
+"Based on school communications, [direct answer]. According to a recent email, [email detail]. The school website also mentions [website detail].
+
+*For website only:*
+"The school website indicates [answer]. Here are the details available:
+• [Website detail 1]
+• [Website detail 2]
+
+For the most current information, you may want to contact [contact method if available]."
+
+**Your Response:**"""
     
     try:
         response = model.generate_content(
             prompt,
             generation_config=genai.types.GenerationConfig(
-                max_output_tokens=600,  # Increased for more detailed responses
-                temperature=0.1,  # Lower for more consistent responses
-                top_p=0.8,  # Add top_p for better quality
+                max_output_tokens=800,  # Increased for more comprehensive responses
+                temperature=0.2,  # Slightly higher for more natural language while maintaining accuracy
+                top_p=0.9,  # Higher top_p for better coherence and flow
+                top_k=40,  # Add top_k for more controlled generation
             ),
             stream=True
         )
