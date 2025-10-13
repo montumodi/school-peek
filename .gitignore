@@ -5,6 +5,10 @@ __pycache__/
 
 uploads
 
+# Gmail OAuth tokens
+token.pickle
+credentials.json
+
 # C extensions
 *.so
 

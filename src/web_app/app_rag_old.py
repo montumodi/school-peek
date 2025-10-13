@@ -1,0 +1,371 @@
+import sys
+import datetime
+import os
+import streamlit as st
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
+from utils.mongo_utils import get_mongo_client, get_mongo_db
+import google.generativeai as genai
+
+from config.config import GEMINI_API_KEY, MONGODB_VECTOR_COLL_LANGCHAIN
+
+# Hardcoded credentials
+VALID_CREDENTIALS = {
+    "admin": "Password1!",
+    "teacher": "Password2!",
+    "user": "Password3!"
+}
+
+def check_authentication():
+    """Check if user is authenticated"""
+    if "authenticated" not in st.session_state:
+        st.session_state.authenticated = False
+    return st.session_state.authenticated
+
+def login_page():
+    """Display login page"""
+    st.title("🔐 Ada Lovelace School Assistant - Login")
+    st.markdown("Please enter your credentials to access the school assistant.")
+    
+    with st.form("login_form"):
+        username = st.text_input("Username")
+        password = st.text_input("Password", type="password")
+        submitted = st.form_submit_button("Login")
+        
+        if submitted:
+            if username in VALID_CREDENTIALS and VALID_CREDENTIALS[username] == password:
+                st.session_state.authenticated = True
+                st.session_state.username = username
+                st.success("✅ Login successful!")
+                st.rerun()
+            else:
+                st.error("❌ Invalid username or password")
+    
+    # Show demo credentials (remove in production)
+    with st.expander("🔍 Demo Credentials"):
+        st.markdown("""
+        **Available accounts:**
+        - Username: `admin` | Password: `admin123`
+        - Username: `teacher` | Password: `teacher123`
+        - Username: `user` | Password: `password123`
+        """)
+
+def logout():
+    """Logout function"""
+    st.session_state.authenticated = False
+    if "username" in st.session_state:
+        del st.session_state.username
+    if "chats" in st.session_state:
+        del st.session_state.chats
+    if "current_chat_id" in st.session_state:
+        del st.session_state.current_chat_id
+    if "chat_counter" in st.session_state:
+        del st.session_state.chat_counter
+    st.rerun()
+
+# Check authentication first
+if not check_authentication():
+    login_page()
+    st.stop()
+
+client = get_mongo_client(app_name="web_content_embedding")
+db = get_mongo_db(client)
+collection = db[MONGODB_VECTOR_COLL_LANGCHAIN]
+
+# Configure Gemini API
+genai.configure(api_key=GEMINI_API_KEY)
+model = genai.GenerativeModel('gemini-1.5-flash')
+
+def get_gemini_embedding(text):
+    """Get embeddings using Gemini's embedding model (768 dimensions)"""
+    try:
+        result = genai.embed_content(
+            model="models/text-embedding-004",
+            content=text,
+            task_type="retrieval_query"
+        )
+        return result['embedding']
+    except Exception as e:
+        print(f"Error generating Gemini embedding: {e}")
+        return None
+
+def get_chat_response(query, chat_history=None):
+    embeddings = get_gemini_embedding(query)
+    
+    if embeddings is None:
+        yield "Error: Could not generate embeddings for your query."
+        return
+    
+    # Enhanced vector search to capture more email content
+    results = collection.aggregate([
+        {
+            "$vectorSearch": {
+                "index": "vector_index",
+                "path": "embedding",
+                "queryVector": embeddings,
+                "numCandidates": 100,  # Consider more candidates to find email content
+                "limit": 15,  # Retrieve more results initially for better prioritization
+                "exact": False  # Use approximate search for better performance
+            }
+        },
+        {
+            "$addFields": {
+                "similarity_score": {
+                    "$meta": "vectorSearchScore"
+                }
+            }
+        },
+        {
+            "$match": {
+                "similarity_score": {"$gte": 0.6}  # Slightly lower threshold to capture more email content
+            }
+        },
+        {
+            "$limit": 8  # Take more results for better email prioritization
+        }
+    ])
+    
+    # Process results with metadata and prioritize email sources
+    relevant_docs = []
+    for result in results:
+        source_type = result.get('source', 'unknown')
+        
+        # Map source types to user-friendly names and priority
+        source_mapping = {
+            'email_body': {'display': 'School Email', 'priority': 1},
+            'email_attachment': {'display': 'Email Attachment', 'priority': 2},
+            'unknown': {'display': 'School Website', 'priority': 3}
+        }
+        
+        source_info = source_mapping.get(source_type, {'display': 'School Resource', 'priority': 3})
+        
+        doc_info = {
+            "content": result['content'],
+            "score": result.get('similarity_score', 0),
+            "source": source_type,
+            "source_display": source_info['display'],
+            "priority": source_info['priority'],
+            "source_id": str(result.get('source_document_id', ''))
+        }
+        relevant_docs.append(doc_info)
+    
+    # Sort by priority (email content first), then by similarity score
+    relevant_docs.sort(key=lambda x: (x['priority'], -x['score']))
+    
+    # Limit to top 5 results but ensure email sources are prioritized
+    if len(relevant_docs) > 5:
+        # Keep all email sources and fill remaining slots with website content
+        email_docs = [doc for doc in relevant_docs if doc['priority'] <= 2]  # email body and attachments
+        website_docs = [doc for doc in relevant_docs if doc['priority'] > 2]  # website content
+        
+        # Take up to 5 total, prioritizing email content
+        relevant_docs = email_docs + website_docs[:max(0, 5 - len(email_docs))]
+    
+    # Build context with better structure
+    if not relevant_docs:
+        context_string = "No highly relevant documents found for this query."
+        yield "I don't have specific information about that topic from the school resources. You may want to contact the school directly for more details."
+        return
+    
+    # Create structured context with enhanced source attribution
+    context_parts = []
+    for i, doc in enumerate(relevant_docs, 1):
+        source_info = f"[Source {i} - {doc['source_display']} (relevance: {doc['score']:.2f})]"
+        context_parts.append(f"{source_info}\n{doc['content']}")
+    
+    context_string = "\n\n".join(context_parts)
+    
+    # Build conversation history for context
+    conversation_context = ""
+    if chat_history and len(chat_history) > 1:
+        conversation_context = "\n\nPrevious conversation:\n"
+        # Only include last 4 messages to avoid token limits
+        recent_history = chat_history[-4:]
+        for msg in recent_history[:-1]:  # Exclude current message
+            role = "Human" if msg["sender"] == "user" else "Assistant"
+            conversation_context += f"{role}: {msg['text']}\n"
+    
+    current_date = datetime.datetime.now().strftime("%B %d, %Y")
+    
+    # Enhanced prompt with improved instructions and examples
+    prompt = f"""You are the official AI assistant for Ada Lovelace School. Your role is to help students, parents, and staff by providing accurate, helpful information based exclusively on official school documentation.
+
+**Context Information:**
+- Today's Date: {current_date}
+- User Question: "{query}"
+{conversation_context}
+
+**Available School Information (prioritized by source reliability):**
+{context_string}
+
+**Core Instructions:**
+1. **SOURCE FIDELITY**: Answer ONLY using the provided school information above. Never invent or assume details not explicitly stated.
+
+2. **SOURCE PRIORITIZATION**: Information sources are ranked by reliability and currentness:
+   - **HIGHEST PRIORITY**: School Emails (most current, official communications)
+   - **HIGH PRIORITY**: Email Attachments (official documents, forms, announcements)
+   - **STANDARD PRIORITY**: School Website (general information, may be less current)
+
+3. **RESPONSE STRUCTURE**: Format your response clearly:
+   - Start with a direct answer to the question
+   - Provide supporting details from the sources (prioritize email sources)
+   - End with next steps or additional help if applicable
+
+4. **SOURCE ATTRIBUTION**: Always indicate where information comes from, using specific source types:
+   - "According to a recent school email..." (for email body sources)
+   - "Based on an official school document..." (for email attachment sources)  
+   - "The school website states..." (for website sources)
+   - "School communications indicate..." (for mixed sources)
+
+5. **HANDLING GAPS**: When information is missing or incomplete:
+   - Clearly state: "I don't have specific information about [topic] in the school resources available to me"
+   - Suggest contacting the school directly: "For the most current information, please contact the school office"
+   - If partial information exists, share what you have and note what's missing
+
+6. **CONVERSATION AWARENESS**: 
+   - Reference previous questions when relevant
+   - Build on earlier context in the conversation
+   - Maintain continuity in multi-turn discussions
+
+7. **QUALITY INDICATORS**:
+   - Prioritize information from email sources over website sources
+   - Prioritize information from sources with higher relevance scores (above 0.8)
+   - When email and website sources conflict, favor email sources as more current
+   - Note when information might be outdated
+   - Highlight conflicting information from different sources
+
+7. **TONE & STYLE**:
+   - Be warm, helpful, and professional
+   - Use clear, accessible language appropriate for students and parents
+   - Be concise but thorough
+   - Use bullet points or numbered lists for complex information
+
+**Example Response Formats:**
+
+*For email sources (preferred):*
+"According to a recent school email, [direct answer]. Here are the key details:
+• [Detail 1 from email]
+• [Detail 2 from email attachment]
+
+*For mixed sources:*  
+"Based on school communications, [direct answer]. According to a recent email, [email detail]. The school website also mentions [website detail].
+
+*For website only:*
+"The school website indicates [answer]. Here are the details available:
+• [Website detail 1]
+• [Website detail 2]
+
+For the most current information, you may want to contact [contact method if available]."
+
+**Your Response:**"""
+    
+    try:
+        response = model.generate_content(
+            prompt,
+            generation_config=genai.types.GenerationConfig(
+                max_output_tokens=800,  # Increased for more comprehensive responses
+                temperature=0.2,  # Slightly higher for more natural language while maintaining accuracy
+                top_p=0.9,  # Higher top_p for better coherence and flow
+                top_k=40,  # Add top_k for more controlled generation
+            ),
+            stream=True
+        )
+        
+        for chunk in response:
+            if chunk.text:
+                yield chunk.text
+    except Exception as e:
+        yield f"Error generating response: {str(e)}"
+
+# Initialize session state for multiple chats
+if "chats" not in st.session_state:
+    st.session_state.chats = {}
+if "current_chat_id" not in st.session_state:
+    st.session_state.current_chat_id = "chat_1"
+if "chat_counter" not in st.session_state:
+    st.session_state.chat_counter = 1
+
+# Sidebar for chat management
+with st.sidebar:
+    # User info and logout
+    st.markdown(f"👤 **Logged in as:** {st.session_state.username}")
+    if st.button("🚪 Logout", use_container_width=True, type="secondary"):
+        logout()
+    
+    st.divider()
+    st.header("💬 Chat Sessions")
+    
+    # New chat button
+    if st.button("➕ New Chat", use_container_width=True):
+        st.session_state.chat_counter += 1
+        new_chat_id = f"chat_{st.session_state.chat_counter}"
+        st.session_state.current_chat_id = new_chat_id
+        st.session_state.chats[new_chat_id] = []
+        st.rerun()
+    
+    st.divider()
+    
+    # Display existing chats
+    for chat_id in st.session_state.chats.keys():
+        chat_history = st.session_state.chats[chat_id]
+        # Get first user message as chat title, or use default
+        if chat_history and chat_history[0]["sender"] == "user":
+            title = chat_history[0]["text"][:30] + "..." if len(chat_history[0]["text"]) > 30 else chat_history[0]["text"]
+        else:
+            title = f"Chat {chat_id.split('_')[1]}"
+        
+        # Highlight current chat
+        if chat_id == st.session_state.current_chat_id:
+            st.markdown(f"**🔸 {title}**")
+        else:
+            if st.button(title, key=f"switch_{chat_id}", use_container_width=True):
+                st.session_state.current_chat_id = chat_id
+                st.rerun()
+    
+    # Delete current chat button
+    if len(st.session_state.chats) > 1:
+        st.divider()
+        if st.button("🗑️ Delete Current Chat", use_container_width=True, type="secondary"):
+            if st.session_state.current_chat_id in st.session_state.chats:
+                del st.session_state.chats[st.session_state.current_chat_id]
+                # Switch to first available chat
+                st.session_state.current_chat_id = list(st.session_state.chats.keys())[0]
+                st.rerun()
+
+# Initialize current chat if it doesn't exist
+if st.session_state.current_chat_id not in st.session_state.chats:
+    st.session_state.chats[st.session_state.current_chat_id] = []
+
+# Main chat interface
+current_chat = st.session_state.chats[st.session_state.current_chat_id]
+chat_number = st.session_state.current_chat_id.split('_')[1]
+
+st.title(f"🎓 Ada Lovelace School Assistant - Chat {chat_number}")
+st.caption("Ask me anything about Ada Lovelace School. I'll search through official school information to help you.")
+
+# Display chat history
+for msg in current_chat:
+    with st.chat_message(msg["sender"]):
+        st.markdown(msg["text"])
+
+# Chat input
+user_input = st.chat_input("Ask a question about Ada Lovelace School...")
+if user_input:
+    # Add user message to current chat
+    current_chat.append({"sender": "user", "text": user_input})
+    with st.chat_message("user"):
+        st.markdown(user_input)
+    
+    # Generate and display bot response
+    with st.chat_message("bot"):
+        response_container = st.empty()
+        full_response = ""
+        for chunk in get_chat_response(user_input, current_chat):
+            full_response += chunk
+            response_container.markdown(full_response)
+        
+        # Add bot response to current chat
+        current_chat.append({"sender": "bot", "text": full_response})
+        
+        # Update the session state
+        st.session_state.chats[st.session_state.current_chat_id] = current_chat
