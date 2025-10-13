@@ -3,7 +3,9 @@ requests
 python-dotenv
 streamlit
 google-generativeai
+google-adk
 beautifulsoup4
 google-auth-oauthlib
 google-auth-httplib2
 google-api-python-client
+nest-asyncio
