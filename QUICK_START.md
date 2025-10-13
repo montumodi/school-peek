@@ -15,13 +15,15 @@ The School Peek web application now uses **intelligent agents** instead of pre-i
 pip install -r requirements-web.txt
 ```
 
-### 2. Set Your API Key
+### 2. Set Your API Key (Required)
 
 ```bash
-export GEMINI_API_KEY="your-gemini-api-key-here"
+export GEMINI_API_KEY="your-actual-gemini-api-key-here"
 ```
 
-Don't have a Gemini API key? Get one free at: https://makersuite.google.com/app/apikey
+**Important**: This is a **required** environment variable. The application will not work without it.
+
+Don't have a Gemini API key? Get one free at: https://aistudio.google.com/app/apikey
 
 ### 3. Run the App
 
@@ -104,8 +106,9 @@ The **Agent Coordinator** automatically decides which agent(s) to use based on y
 ## Troubleshooting
 
 ### "GEMINI_API_KEY not set"
+This is a **required** environment variable. Get your API key from https://aistudio.google.com/app/apikey
 ```bash
-export GEMINI_API_KEY="your-key"
+export GEMINI_API_KEY="your-actual-api-key-here"
 ```
 
 ### "Gmail authentication required"
@@ -161,10 +164,13 @@ python test_agents.py
 # Run examples
 python example_usage.py
 
-# Switch back to old system (if needed)
+# Switch back to old RAG system (if needed - advanced)
+# WARNING: This will replace the current agentic app with the old RAG system
 cd src/web_app
-mv app.py app_agents.py
-mv app_rag_old.py app.py
+cp app.py app_agents_backup.py  # Create backup first
+cp app_rag_old.py app.py
+# Verify the switch worked:
+grep -q "RAG" app.py && echo "Switched to RAG system" || echo "Still using agentic system"
 ```
 
 ## What Questions Work Best?
@@ -243,10 +249,22 @@ Once you're comfortable with the basic setup:
 
 ## Security Notes
 
-- **API Keys**: Never commit API keys to version control
-- **Gmail Access**: Users must grant explicit permission
-- **Credentials**: Keep credentials.json and token.pickle private
-- **Production**: Use proper secret management in production
+- **API Keys**: 
+  - Never commit API keys to version control
+  - Always use environment variables (never hardcode in files)
+  - Use `.env` files with proper `.gitignore` entries for local development
+  - In production, use secure secret management (AWS Secrets Manager, Azure Key Vault, etc.)
+- **Gmail Access**: 
+  - Users must grant explicit permission via OAuth 2.0
+  - OAuth tokens are stored in `token.pickle` - keep this file private
+- **Credentials**: 
+  - Keep `credentials.json` and `token.pickle` private and out of version control
+  - These files are already in `.gitignore`
+- **Production Deployment**: 
+  - Use proper secret management services
+  - Never include credentials in Docker images or deployment artifacts
+  - Rotate API keys regularly
+  - Use least-privilege access principles
 
 ## Performance Tips
 
