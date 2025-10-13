@@ -1,6 +1,7 @@
 """
 Gmail Search Agent - Agent 2
 Searches user's Gmail account for emails from school
+Uses Google's native function calling (ADK)
 """
 import sys
 import os
@@ -10,9 +11,8 @@ from datetime import datetime, timedelta
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from langchain.agents import Tool, AgentExecutor, create_react_agent
-from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain.prompts import PromptTemplate
+import google.generativeai as genai
+from google.generativeai.types import FunctionDeclaration, Tool
 
 try:
     from google.oauth2.credentials import Credentials
@@ -46,65 +46,66 @@ class GmailSearchAgent:
         self.token_path = token_path or 'token.pickle'
         self.gmail_service = None
         
-        # Initialize LLM
-        self.llm = ChatGoogleGenerativeAI(
-            model="gemini-1.5-flash",
-            google_api_key=gemini_api_key,
-            temperature=0.3
+        # Configure Gemini
+        genai.configure(api_key=gemini_api_key)
+        
+        # Initialize model with function calling
+        self.model = genai.GenerativeModel(
+            model_name='gemini-1.5-flash',
+            tools=[self._create_tools()]
         )
         
-        # Create tools
-        self.tools = [
-            Tool(
-                name="search_emails",
-                func=self._search_emails,
-                description="Search Gmail for emails from school domain. Input should be a search query."
-            ),
-            Tool(
-                name="get_recent_emails",
-                func=self._get_recent_emails,
-                description="Get recent emails from school domain. Input should be number of days to look back (e.g., '7' for last 7 days)."
-            ),
-            Tool(
-                name="search_by_subject",
-                func=self._search_by_subject,
-                description="Search emails by subject line. Input should be the subject keywords to search for."
-            )
-        ]
-        
-        # Create agent
-        self.agent = self._create_agent()
+        # Create chat for maintaining context
+        self.chat = None
     
-    def _create_agent(self) -> AgentExecutor:
-        """Create the ReAct agent"""
-        template = """You are a helpful assistant that searches Gmail for school-related emails.
-
-You have access to the following tools:
-{tools}
-
-Use the following format:
-
-Question: the input question you must answer
-Thought: you should always think about what to do
-Action: the action to take, should be one of [{tool_names}]
-Action Input: the input to the action
-Observation: the result of the action
-... (this Thought/Action/Action Input/Observation can repeat N times)
-Thought: I now know the final answer
-Final Answer: the final answer to the original input question
-
-Begin!
-
-Question: {input}
-Thought: {agent_scratchpad}"""
-
-        prompt = PromptTemplate(
-            template=template,
-            input_variables=["input", "agent_scratchpad", "tools", "tool_names"]
+    def _create_tools(self) -> Tool:
+        """Create function declarations for Gmail tools"""
+        search_emails_func = FunctionDeclaration(
+            name="search_emails",
+            description="Search Gmail for emails from school domain. Returns matching emails with subject, sender, date and content.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "The search query to find emails"
+                    }
+                },
+                "required": ["query"]
+            }
         )
         
-        agent = create_react_agent(self.llm, self.tools, prompt)
-        return AgentExecutor(agent=agent, tools=self.tools, verbose=True, max_iterations=10)
+        get_recent_emails_func = FunctionDeclaration(
+            name="get_recent_emails",
+            description="Get recent emails from school domain within specified number of days.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "days": {
+                        "type": "string",
+                        "description": "Number of days to look back (e.g., '7' for last 7 days)"
+                    }
+                },
+                "required": ["days"]
+            }
+        )
+        
+        search_by_subject_func = FunctionDeclaration(
+            name="search_by_subject",
+            description="Search emails by subject line keywords.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "subject_keywords": {
+                        "type": "string",
+                        "description": "Keywords to search for in email subjects"
+                    }
+                },
+                "required": ["subject_keywords"]
+            }
+        )
+        
+        return Tool(function_declarations=[search_emails_func, get_recent_emails_func, search_by_subject_func])
     
     def _authenticate(self) -> bool:
         """Authenticate with Gmail API"""
@@ -285,10 +286,82 @@ Thought: {agent_scratchpad}"""
         except Exception as e:
             return f"Error searching by subject: {str(e)}"
     
-    def search(self, query: str) -> str:
-        """Main search method"""
+    def _execute_function(self, function_name: str, args: Dict[str, Any]) -> str:
+        """Execute a function by name with given arguments"""
+        if function_name == "search_emails":
+            return self._search_emails(args["query"])
+        elif function_name == "get_recent_emails":
+            return self._get_recent_emails(args["days"])
+        elif function_name == "search_by_subject":
+            return self._search_by_subject(args["subject_keywords"])
+        else:
+            return f"Unknown function: {function_name}"
+    
+    def search(self, query: str, max_iterations: int = 10) -> str:
+        """Main search method using Google's function calling"""
+        # Create new chat session for this search
+        self.chat = self.model.start_chat()
+        
         try:
-            result = self.agent.invoke({"input": query})
-            return result.get("output", "No results found")
+            prompt = f"""You are a helpful assistant that searches Gmail for school-related emails.
+
+Your task is to answer this question: {query}
+
+You have access to these functions to search Gmail:
+- search_emails: Search for emails matching keywords
+- get_recent_emails: Get emails from last N days
+- search_by_subject: Search by email subject
+
+Use the functions to find relevant information. Provide a clear, helpful answer based on the emails you find."""
+
+            response = self.chat.send_message(prompt)
+            
+            # Handle function calling loop
+            iteration = 0
+            while iteration < max_iterations:
+                # Check if model wants to call a function
+                if not response.candidates[0].content.parts:
+                    break
+                    
+                function_call = None
+                for part in response.candidates[0].content.parts:
+                    if hasattr(part, 'function_call') and part.function_call:
+                        function_call = part.function_call
+                        break
+                
+                if not function_call:
+                    # No more function calls, we have the final answer
+                    break
+                
+                # Execute the function
+                function_name = function_call.name
+                function_args = dict(function_call.args)
+                
+                print(f"Calling function: {function_name} with args: {function_args}")
+                
+                function_result = self._execute_function(function_name, function_args)
+                
+                # Send function result back to model
+                response = self.chat.send_message(
+                    genai.types.content_types.to_content({
+                        "parts": [{
+                            "function_response": {
+                                "name": function_name,
+                                "response": {"result": function_result}
+                            }
+                        }]
+                    })
+                )
+                
+                iteration += 1
+            
+            # Get final text response
+            if response.candidates[0].content.parts:
+                for part in response.candidates[0].content.parts:
+                    if hasattr(part, 'text') and part.text:
+                        return part.text
+            
+            return "No results found"
+            
         except Exception as e:
             return f"Error during Gmail search: {str(e)}"
