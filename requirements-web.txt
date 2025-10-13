@@ -3,3 +3,10 @@ requests
 python-dotenv
 streamlit
 google-generativeai
+langchain
+langchain-google-genai
+langchain-community
+beautifulsoup4
+google-auth-oauthlib
+google-auth-httplib2
+google-api-python-client
