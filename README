@@ -1,0 +1,292 @@
+# Ada Lovelace School Assistant 🎓
+
+An intelligent AI-powered assistant for Ada Lovelace School that provides information to students, parents, and staff using RAG (Retrieval-Augmented Generation) with MongoDB vector search and Google Gemini AI.
+
+## ✨ Features
+
+### 🔐 Authentication
+- **Google OAuth Integration**: Sign in securely with Google accounts
+- **Profile Management**: View user profile with name, email, and picture
+- **Demo Mode**: Fallback authentication for development/testing
+
+### 💬 Chat Interface
+- **Multi-Session Support**: Create and manage multiple chat conversations
+- **Context-Aware Responses**: AI maintains conversation history
+- **Source Attribution**: Responses cite email, attachments, or website sources
+- **Smart Prioritization**: Email content prioritized over website information
+
+### 🔍 Intelligent Search
+- **Vector-Based Search**: MongoDB Atlas vector search for semantic matching
+- **Multi-Source Integration**:
+  - School emails
+  - Email attachments
+  - School website content
+- **Relevance Scoring**: Results ranked by similarity and source priority
+
+### 🤖 AI-Powered Responses
+- **Google Gemini 2.5 Flash**: Advanced language model for natural responses
+- **RAG Architecture**: Combines retrieved context with generative AI
+- **Structured Output**: Clear, well-formatted answers with source citations
+
+## 📁 Project Structure
+
+```
+school-peek/
+├── src/
+│   ├── agents/              # AI agents (Gmail, search, coordinator)
+│   ├── api/                 # API server
+│   ├── config/              # Configuration management
+│   ├── scrap/               # Data scraping and processing
+│   ├── utils/               # Utility functions
+│   └── web_app/             # Streamlit web application
+├── requirements-api.txt     # API dependencies
+├── requirements-web.txt     # Web app dependencies
+├── Dockerfile.api           # API container
+├── Dockerfile.web           # Web app container
+├── .env.example             # Environment variables template
+├── GOOGLE_OAUTH_SETUP.md    # OAuth setup guide
+├── QUICKSTART_GOOGLE_AUTH.md # Quick start guide
+└── README                   # This file
+```
+
+## 🚀 Quick Start
+
+### Prerequisites
+- Python 3.8+
+- MongoDB Atlas account (with vector search)
+- Google Gemini API key
+- Google Cloud project (for OAuth)
+
+### Installation
+
+1. **Clone the repository**:
+   ```bash
+   git clone <repository-url>
+   cd school-peek
+   ```
+
+2. **Install dependencies**:
+   ```bash
+   pip install -r requirements-web.txt
+   ```
+
+3. **Set up environment variables**:
+   ```bash
+   cp .env.example .env
+   # Edit .env with your credentials
+   ```
+
+4. **Configure Google OAuth** (see [GOOGLE_OAUTH_SETUP.md](GOOGLE_OAUTH_SETUP.md)):
+   - Create Google Cloud project
+   - Set up OAuth credentials
+   - Add environment variables
+
+5. **Run the web app**:
+   ```bash
+   streamlit run src/web_app/app.py
+   ```
+
+6. **Access the app**:
+   - Open http://localhost:8501
+   - Sign in with Google or use demo credentials
+
+## 🔧 Configuration
+
+### Environment Variables
+
+Required environment variables (see `.env.example`):
+
+```bash
+# MongoDB
+MONGODB_URI=mongodb+srv://...
+PORT=8501
+
+# AI Services
+GEMINI_API_KEY=your_gemini_api_key
+HF_TOKEN=your_huggingface_token
+
+# Google OAuth (for web authentication)
+GOOGLE_CLIENT_ID=your_client_id.apps.googleusercontent.com
+GOOGLE_CLIENT_SECRET=your_client_secret
+GOOGLE_REDIRECT_URI=http://localhost:8501
+```
+
+### Demo Mode (Development Only)
+
+If Google OAuth is not configured, the app falls back to demo mode:
+
+**Demo Credentials**:
+- Username: `admin` | Password: `Password1!`
+- Username: `teacher` | Password: `Password2!`
+- Username: `user` | Password: `Password3!`
+
+⚠️ **Remove demo mode in production!**
+
+## 📚 Documentation
+
+- **[GOOGLE_OAUTH_SETUP.md](GOOGLE_OAUTH_SETUP.md)**: Complete Google OAuth setup guide
+- **[QUICKSTART_GOOGLE_AUTH.md](QUICKSTART_GOOGLE_AUTH.md)**: Quick start for authentication
+- **[OAUTH_FLOW_DIAGRAM.md](OAUTH_FLOW_DIAGRAM.md)**: Visual authentication flow
+- **[IMPLEMENTATION_SUMMARY.md](IMPLEMENTATION_SUMMARY.md)**: Technical implementation details
+
+## 🏗️ Architecture
+
+### Data Flow
+
+```
+User Query → Streamlit UI → Embedding Generation (Gemini) 
+                                    ↓
+            MongoDB Vector Search ← Query Vector
+                                    ↓
+            Retrieved Documents (with sources)
+                                    ↓
+            Context + Query → Gemini 2.5 Flash → Response
+                                    ↓
+            Formatted Answer with Citations → User
+```
+
+### Components
+
+1. **Web Interface** (Streamlit):
+   - User authentication
+   - Chat management
+   - Response display
+
+2. **Embedding Generation** (Google Gemini):
+   - Text-to-vector conversion
+   - 768-dimensional embeddings
+   - Model: `text-embedding-004`
+
+3. **Vector Search** (MongoDB Atlas):
+   - Semantic search
+   - Similarity scoring
+   - Source filtering
+
+4. **Response Generation** (Google Gemini):
+   - Context-aware responses
+   - Source attribution
+   - Model: `gemini-2.5-flash`
+
+## 🔒 Security Features
+
+- ✅ Google OAuth 2.0 authentication
+- ✅ State token CSRF protection
+- ✅ Secure token verification
+- ✅ Environment-based secrets
+- ✅ Session-based authentication
+- ✅ Minimal scope requests (openid, email, profile)
+- ✅ No credential storage in code
+
+## 🐳 Docker Deployment
+
+### Build Containers
+
+```bash
+# Web app
+docker build -f Dockerfile.web -t school-assistant-web .
+
+# API server
+docker build -f Dockerfile.api -t school-assistant-api .
+```
+
+### Run Containers
+
+```bash
+# Web app
+docker run -p 8501:8501 --env-file .env school-assistant-web
+
+# API server
+docker run -p 8000:8000 --env-file .env school-assistant-api
+```
+
+## 🧪 Testing
+
+### Test Authentication
+1. Run the app: `streamlit run src/web_app/app.py`
+2. Try Google OAuth login
+3. Try demo mode (if OAuth not configured)
+
+### Test Chat Functionality
+1. Log in to the app
+2. Ask a question about the school
+3. Verify response includes source citations
+4. Create multiple chat sessions
+5. Switch between chats
+
+## 🛠️ Development
+
+### Project Components
+
+- **`src/agents/`**: LangChain agents for Gmail and web search
+- **`src/api/`**: FastAPI server for API endpoints
+- **`src/config/`**: Configuration and environment management
+- **`src/scrap/`**: Data scraping, processing, and embedding scripts
+- **`src/utils/`**: Utility functions for MongoDB, embeddings, text processing
+- **`src/web_app/`**: Streamlit web application
+
+### Adding New Features
+
+1. **Add new data sources**: Update scraping scripts in `src/scrap/`
+2. **Modify UI**: Edit `src/web_app/app.py`
+3. **Change AI behavior**: Adjust prompts in `get_chat_response()` function
+4. **Add API endpoints**: Extend `src/api/server.py`
+
+## 📦 Dependencies
+
+### Core Technologies
+- **Streamlit**: Web interface
+- **MongoDB**: Vector database
+- **Google Gemini**: Embeddings and language model
+- **LangChain**: Agent framework
+- **Google OAuth**: Authentication
+
+### Key Libraries
+- `pymongo`: MongoDB driver
+- `google-generativeai`: Gemini API
+- `google-auth`: OAuth authentication
+- `streamlit`: Web framework
+- `langchain`: Agent framework
+
+## 🚧 Roadmap
+
+- [ ] Domain-restricted authentication (@school.edu emails only)
+- [ ] Role-based access control (student/teacher/admin)
+- [ ] User database for persistence
+- [ ] Advanced analytics dashboard
+- [ ] Multi-language support
+- [ ] Mobile-responsive design
+- [ ] Email notification integration
+- [ ] Calendar integration
+- [ ] File upload support
+
+## 🤝 Contributing
+
+1. Fork the repository
+2. Create a feature branch
+3. Make your changes
+4. Test thoroughly
+5. Submit a pull request
+
+## 📄 License
+
+[Specify your license here]
+
+## 🆘 Support
+
+For issues or questions:
+1. Check the documentation files
+2. Review troubleshooting sections
+3. Open an issue on GitHub
+4. Contact the development team
+
+## 🙏 Acknowledgments
+
+- Google Gemini for AI capabilities
+- MongoDB for vector search
+- Streamlit for the web framework
+- LangChain for agent framework
+- The Ada Lovelace School community
+
+---
+
+**Made with ❤️ for Ada Lovelace School**

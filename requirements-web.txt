@@ -3,3 +3,13 @@ requests
 python-dotenv
 streamlit
 google-generativeai
+streamlit-oauth
+google-auth
+google-auth-oauthlib
+google-auth-httplib2
+langchain
+langchain-google-genai
+langchain-google-community
+google-adk
+nest-asyncio
+google-api-python-client

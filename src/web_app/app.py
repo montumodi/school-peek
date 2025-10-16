@@ -2,19 +2,85 @@ import sys
 import datetime
 import os
 import streamlit as st
+import json
+from google.oauth2 import id_token
+from google.auth.transport import requests
+from urllib.parse import urlencode
+import secrets
+
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from utils.mongo_utils import get_mongo_client, get_mongo_db
 import google.generativeai as genai
 
-from config.config import GEMINI_API_KEY, MONGODB_VECTOR_COLL_LANGCHAIN
+from config.config import GEMINI_API_KEY, MONGODB_VECTOR_COLL_LANGCHAIN, GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_REDIRECT_URI, ALLOWED_EMAILS
 
-# Hardcoded credentials
-VALID_CREDENTIALS = {
-    "admin": "Password1!",
-    "teacher": "Password2!",
-    "user": "Password3!"
-}
+def is_email_allowed(email):
+    """Check if email is in the allowed list"""
+    if not ALLOWED_EMAILS or len(ALLOWED_EMAILS) == 0 or ALLOWED_EMAILS[0] == "":
+        # If no restrictions are set, allow all
+        return True
+    
+    email_lower = email.lower()
+    
+    for allowed in ALLOWED_EMAILS:
+        allowed = allowed.strip().lower()
+        if not allowed:
+            continue
+            
+        # Check if it's a domain restriction (starts with @)
+        if allowed.startswith("@"):
+            if email_lower.endswith(allowed):
+                return True
+        # Check if it's an exact email match
+        elif email_lower == allowed:
+            return True
+    
+    return False
+
+def get_google_auth_url():
+    """Generate Google OAuth URL"""
+    if not GOOGLE_CLIENT_ID:
+        return None
+    
+    # Generate a random state token for security
+    # Use a fixed state for simplicity in Streamlit (state persistence is challenging)
+    # In production, consider using a database to store state tokens
+    state = secrets.token_urlsafe(32)
+    
+    params = {
+        "client_id": GOOGLE_CLIENT_ID,
+        "redirect_uri": GOOGLE_REDIRECT_URI,
+        "response_type": "code",
+        "scope": "openid email profile https://www.googleapis.com/auth/gmail.readonly",  # Added Gmail readonly scope
+        "state": state,
+        "access_type": "offline",
+        "prompt": "select_account"
+    }
+    
+    return f"https://accounts.google.com/o/oauth2/v2/auth?{urlencode(params)}", state
+
+def verify_google_token(token):
+    """Verify Google ID token and return user info"""
+    try:
+        idinfo = id_token.verify_oauth2_token(
+            token, 
+            requests.Request(), 
+            GOOGLE_CLIENT_ID
+        )
+        
+        if idinfo['iss'] not in ['accounts.google.com', 'https://accounts.google.com']:
+            raise ValueError('Wrong issuer.')
+            
+        return {
+            'email': idinfo.get('email'),
+            'name': idinfo.get('name'),
+            'picture': idinfo.get('picture'),
+            'user_id': idinfo.get('sub')
+        }
+    except ValueError as e:
+        st.error(f"Token verification failed: {e}")
+        return None
 
 def check_authentication():
     """Check if user is authenticated"""
@@ -23,44 +89,214 @@ def check_authentication():
     return st.session_state.authenticated
 
 def login_page():
-    """Display login page"""
+    """Display login page with Google OAuth"""
     st.title("🔐 Ada Lovelace School Assistant - Login")
-    st.markdown("Please enter your credentials to access the school assistant.")
+    st.markdown("Please sign in with your Google account to access the school assistant.")
     
-    with st.form("login_form"):
-        username = st.text_input("Username")
-        password = st.text_input("Password", type="password")
-        submitted = st.form_submit_button("Login")
-        
-        if submitted:
-            if username in VALID_CREDENTIALS and VALID_CREDENTIALS[username] == password:
-                st.session_state.authenticated = True
-                st.session_state.username = username
-                st.success("✅ Login successful!")
-                st.rerun()
-            else:
-                st.error("❌ Invalid username or password")
-    
-    # Show demo credentials (remove in production)
-    with st.expander("🔍 Demo Credentials"):
+    # Check if Google OAuth is configured
+    if not GOOGLE_CLIENT_ID or not GOOGLE_CLIENT_SECRET:
+        st.error("⚠️ Google OAuth is not configured. Please set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET environment variables.")
+        st.info("To set up Google OAuth:")
         st.markdown("""
-        **Available accounts:**
-        - Username: `admin` | Password: `admin123`
-        - Username: `teacher` | Password: `teacher123`
-        - Username: `user` | Password: `password123`
+        1. Go to [Google Cloud Console](https://console.cloud.google.com/)
+        2. Create a new project or select an existing one
+        3. Enable the Google+ API
+        4. Create OAuth 2.0 credentials (Web application)
+        5. Add authorized redirect URI: `http://localhost:8501`
+        6. Set environment variables:
+           - `GOOGLE_CLIENT_ID`: Your client ID
+           - `GOOGLE_CLIENT_SECRET`: Your client secret
+           - `GOOGLE_REDIRECT_URI`: http://localhost:8501
         """)
+        
+        # Fallback to demo mode with hardcoded credentials
+        st.divider()
+        st.markdown("### 🔧 Demo Mode (Development Only)")
+        st.warning("Using hardcoded credentials for development. Remove in production!")
+        
+        VALID_CREDENTIALS = {
+            "admin": "Password1!",
+            "teacher": "Password2!",
+            "user": "Password3!"
+        }
+        
+        with st.form("login_form"):
+            username = st.text_input("Username")
+            password = st.text_input("Password", type="password")
+            submitted = st.form_submit_button("Login")
+            
+            if submitted:
+                if username in VALID_CREDENTIALS and VALID_CREDENTIALS[username] == password:
+                    st.session_state.authenticated = True
+                    st.session_state.username = username
+                    st.session_state.user_email = f"{username}@demo.local"
+                    st.session_state.user_picture = None
+                    st.success("✅ Login successful!")
+                    st.rerun()
+                else:
+                    st.error("❌ Invalid username or password")
+        
+        with st.expander("🔍 Demo Credentials"):
+            st.markdown("""
+            **Available accounts:**
+            - Username: `admin` | Password: `Password1!`
+            - Username: `teacher` | Password: `Password2!`
+            - Username: `user` | Password: `Password3!`
+            """)
+        return
+    
+    # Handle OAuth callback
+    query_params = st.query_params
+    
+    if "code" in query_params:
+        st.info("🔄 Processing Google sign-in...")
+        code = query_params["code"]
+        state = query_params.get("state")
+        
+        # For now, skip state verification due to Streamlit session limitations
+        # In production, use a database to store state tokens with timestamps
+        # Debug info
+        with st.expander("🔍 Debug Info"):
+            st.write(f"Code received: {code[:20]}...")
+            st.write(f"State received: {state}")
+            st.write(f"Redirect URI: {GOOGLE_REDIRECT_URI}")
+        
+        # Exchange code for token
+        try:
+            import requests as http_requests
+            
+            token_url = "https://oauth2.googleapis.com/token"
+            token_data = {
+                "code": code,
+                "client_id": GOOGLE_CLIENT_ID,
+                "client_secret": GOOGLE_CLIENT_SECRET,
+                "redirect_uri": GOOGLE_REDIRECT_URI,
+                "grant_type": "authorization_code"
+            }
+            
+            st.write("Exchanging code for token...")
+            token_response = http_requests.post(token_url, data=token_data)
+            token_json = token_response.json()
+            
+            with st.expander("🔍 Token Response Debug"):
+                if "error" in token_json:
+                    st.error(f"Error: {token_json.get('error')}")
+                    st.write(f"Description: {token_json.get('error_description')}")
+                else:
+                    st.write("Token received successfully!")
+                    st.write(f"Token type: {token_json.get('token_type')}")
+                    st.write(f"Has id_token: {'id_token' in token_json}")
+            
+            if "id_token" in token_json:
+                st.write("Verifying token...")
+                user_info = verify_google_token(token_json["id_token"])
+                
+                if user_info:
+                    # Check if email is allowed
+                    if not is_email_allowed(user_info['email']):
+                        st.error(f"❌ Access denied: {user_info['email']} is not authorized to access this application.")
+                        st.info("Please contact the administrator if you believe this is an error.")
+                        
+                        with st.expander("ℹ️ Authorization Info"):
+                            if ALLOWED_EMAILS and ALLOWED_EMAILS[0]:
+                                st.write("Authorized email patterns:")
+                                for pattern in ALLOWED_EMAILS:
+                                    st.write(f"- {pattern}")
+                            else:
+                                st.write("No email restrictions are configured.")
+                        
+                        if st.button("Back to Login"):
+                            st.query_params.clear()
+                            st.rerun()
+                        return
+                    
+                    st.session_state.authenticated = True
+                    st.session_state.username = user_info['name']
+                    st.session_state.user_email = user_info['email']
+                    st.session_state.user_picture = user_info.get('picture')
+                    st.session_state.user_id = user_info['user_id']
+                    
+                    # Store access token and refresh token for Gmail access
+                    if "access_token" in token_json:
+                        st.session_state.google_access_token = token_json["access_token"]
+                    if "refresh_token" in token_json:
+                        st.session_state.google_refresh_token = token_json["refresh_token"]
+                    
+                    st.success(f"✅ Login successful! Welcome {user_info['name']}")
+                    
+                    # Show granted permissions
+                    if "scope" in token_json:
+                        with st.expander("✅ Granted Permissions"):
+                            scopes = token_json["scope"].split()
+                            for scope in scopes:
+                                if "gmail" in scope:
+                                    st.write("📧 Gmail read access")
+                                elif "profile" in scope:
+                                    st.write("👤 Profile information")
+                                elif "email" in scope:
+                                    st.write("📨 Email address")
+                    
+                    # Clear query params
+                    st.query_params.clear()
+                    
+                    st.write("Redirecting to main app...")
+                    st.rerun()
+                else:
+                    st.error("❌ Failed to verify token")
+            else:
+                error_msg = token_json.get('error_description', token_json.get('error', 'Unknown error'))
+                st.error(f"❌ Failed to get token: {error_msg}")
+                
+        except Exception as e:
+            st.error(f"❌ Authentication error: {str(e)}")
+            st.exception(e)
+        
+        return
+    
+    # Display Google Sign-In button
+    st.markdown("### Sign in with Google")
+    
+    auth_result = get_google_auth_url()
+    if auth_result:
+        google_auth_url, state = auth_result
+        st.markdown(
+            f"""
+            <a href="{google_auth_url}" target="_self">
+                <button style="
+                    background-color: #4285f4;
+                    color: white;
+                    padding: 12px 24px;
+                    border: none;
+                    border-radius: 4px;
+                    font-size: 16px;
+                    font-weight: 500;
+                    cursor: pointer;
+                    display: flex;
+                    align-items: center;
+                    gap: 10px;
+                ">
+                    <svg width="18" height="18" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48">
+                        <path fill="#FFC107" d="M43.611,20.083H42V20H24v8h11.303c-1.649,4.657-6.08,8-11.303,8c-6.627,0-12-5.373-12-12c0-6.627,5.373-12,12-12c3.059,0,5.842,1.154,7.961,3.039l5.657-5.657C34.046,6.053,29.268,4,24,4C12.955,4,4,12.955,4,24c0,11.045,8.955,20,20,20c11.045,0,20-8.955,20-20C44,22.659,43.862,21.35,43.611,20.083z"/>
+                        <path fill="#FF3D00" d="M6.306,14.691l6.571,4.819C14.655,15.108,18.961,12,24,12c3.059,0,5.842,1.154,7.961,3.039l5.657-5.657C34.046,6.053,29.268,4,24,4C16.318,4,9.656,8.337,6.306,14.691z"/>
+                        <path fill="#4CAF50" d="M24,44c5.166,0,9.86-1.977,13.409-5.192l-6.19-5.238C29.211,35.091,26.715,36,24,36c-5.202,0-9.619-3.317-11.283-7.946l-6.522,5.025C9.505,39.556,16.227,44,24,44z"/>
+                        <path fill="#1976D2" d="M43.611,20.083H42V20H24v8h11.303c-0.792,2.237-2.231,4.166-4.087,5.571c0.001-0.001,0.002-0.001,0.003-0.002l6.19,5.238C36.971,39.205,44,34,44,24C44,22.659,43.862,21.35,43.611,20.083z"/>
+                    </svg>
+                    Sign in with Google
+                </button>
+            </a>
+            """,
+            unsafe_allow_html=True
+        )
+    
+    st.divider()
+    st.caption("🔒 Your privacy is protected. We only access your basic profile information (name and email).")
 
 def logout():
     """Logout function"""
     st.session_state.authenticated = False
-    if "username" in st.session_state:
-        del st.session_state.username
-    if "chats" in st.session_state:
-        del st.session_state.chats
-    if "current_chat_id" in st.session_state:
-        del st.session_state.current_chat_id
-    if "chat_counter" in st.session_state:
-        del st.session_state.chat_counter
+    for key in ["username", "user_email", "user_picture", "user_id", "chats", "current_chat_id", "chat_counter", "oauth_state"]:
+        if key in st.session_state:
+            del st.session_state[key]
     st.rerun()
 
 # Check authentication first
@@ -91,6 +327,48 @@ def get_gemini_embedding(text):
         return None
 
 def get_chat_response(query, chat_history=None):
+    """
+    Generate chat response using multi-agent coordinator (web search + Gmail)
+    Falls back to MongoDB knowledge base if agent fails
+    """
+    # Try using coordinator agent if user has Gmail access
+    if st.session_state.get("google_access_token"):
+        try:
+            import asyncio
+            import nest_asyncio
+            from agents.coordinator_agent import call_agent
+            
+            # Apply nest_asyncio to allow nested event loops
+            nest_asyncio.apply()
+            
+            yield "🔍 Searching school resources and emails...\n\n"
+            
+            # Get or create event loop
+            try:
+                loop = asyncio.get_event_loop()
+            except RuntimeError:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+            
+            # Call coordinator agent with OAuth credentials
+            response = loop.run_until_complete(
+                call_agent(
+                    query,
+                    access_token=st.session_state.google_access_token,
+                    refresh_token=st.session_state.get("google_refresh_token")
+                )
+            )
+            
+            if response:
+                yield response
+                return
+        except Exception as e:
+            import traceback
+            error_details = traceback.format_exc()
+            print(f"Agent error: {error_details}")
+            yield f"⚠️ Multi-agent search failed: {str(e)}\n\nFalling back to knowledge base...\n\n"
+    
+    # Fallback to original MongoDB vector search
     embeddings = get_gemini_embedding(query)
     
     if embeddings is None:
@@ -290,8 +568,19 @@ if "chat_counter" not in st.session_state:
 
 # Sidebar for chat management
 with st.sidebar:
-    # User info and logout
-    st.markdown(f"👤 **Logged in as:** {st.session_state.username}")
+    # User info and logout with profile picture
+    if st.session_state.get("user_picture"):
+        col1, col2 = st.columns([1, 3])
+        with col1:
+            st.image(st.session_state.user_picture, width=50)
+        with col2:
+            st.markdown(f"**{st.session_state.username}**")
+            st.caption(st.session_state.get("user_email", ""))
+    else:
+        st.markdown(f"👤 **{st.session_state.username}**")
+        if st.session_state.get("user_email"):
+            st.caption(st.session_state.user_email)
+    
     if st.button("🚪 Logout", use_container_width=True, type="secondary"):
         logout()
     
