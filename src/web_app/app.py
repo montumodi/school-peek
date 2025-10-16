@@ -74,7 +74,8 @@ collection = db[MONGODB_VECTOR_COLL_LANGCHAIN]
 
 # Configure Gemini API
 genai.configure(api_key=GEMINI_API_KEY)
-model = genai.GenerativeModel('gemini-1.5-flash')
+
+model = genai.GenerativeModel("gemini-2.5-flash")
 
 def get_gemini_embedding(text):
     """Get embeddings using Gemini's embedding model (768 dimensions)"""
@@ -124,6 +125,7 @@ def get_chat_response(query, chat_history=None):
             "$limit": 8  # Take more results for better email prioritization
         }
     ])
+
     
     # Process results with metadata and prioritize email sources
     relevant_docs = []
@@ -258,16 +260,16 @@ def get_chat_response(query, chat_history=None):
 For the most current information, you may want to contact [contact method if available]."
 
 **Your Response:**"""
-    
+
     try:
         response = model.generate_content(
             prompt,
-            generation_config=genai.types.GenerationConfig(
-                max_output_tokens=800,  # Increased for more comprehensive responses
-                temperature=0.2,  # Slightly higher for more natural language while maintaining accuracy
-                top_p=0.9,  # Higher top_p for better coherence and flow
-                top_k=40,  # Add top_k for more controlled generation
-            ),
+            # generation_config=genai.types.GenerationConfig(
+            #     max_output_tokens=800,  # Increased for more comprehensive responses
+            #     temperature=0.2,  # Slightly higher for more natural language while maintaining accuracy
+            #     top_p=0.9,  # Higher top_p for better coherence and flow
+            #     top_k=40,  # Add top_k for more controlled generation
+            # ),
             stream=True
         )
         
@@ -275,6 +277,7 @@ For the most current information, you may want to contact [contact method if ava
             if chunk.text:
                 yield chunk.text
     except Exception as e:
+        print(e)
         yield f"Error generating response: {str(e)}"
 
 # Initialize session state for multiple chats
