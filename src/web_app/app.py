@@ -73,7 +73,8 @@ db = get_mongo_db(mongo_client)
 collection = db["scraped_data"]
 
 # Configure Gemini API (LLM only — embeddings handled by MongoDB autoEmbed)
-genai_client = genai.Client(api_key=GEMINI_API_KEY)
+genai.configure(api_key=GEMINI_API_KEY)
+model = genai.GenerativeModel('gemini-2.5-flash')
 
 def get_chat_response(query, chat_history=None):
     # MongoDB autoEmbed generates embeddings server-side from the query text
@@ -238,10 +239,7 @@ For the most current information, you may want to contact [contact method if ava
 **Your Response:**"""
 
     try:
-        for chunk in genai_client.models.generate_content_stream(
-            model="gemini-2.5-flash",
-            contents=prompt
-        ):
+        for chunk in model.generate_content(prompt, stream=True):
             if chunk.text:
                 yield chunk.text
     except Exception as e:
