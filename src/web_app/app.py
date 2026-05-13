@@ -5,7 +5,7 @@ import streamlit as st
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from utils.mongo_utils import get_mongo_client, get_mongo_db
-import google.genai as genai
+import google.generativeai as genai
 
 from config.config import GEMINI_API_KEY
 
