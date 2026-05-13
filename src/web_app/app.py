@@ -5,9 +5,9 @@ import streamlit as st
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from utils.mongo_utils import get_mongo_client, get_mongo_db
-import google.generativeai as genai
+import google.genai as genai
 
-from config.config import GEMINI_API_KEY, MONGODB_VECTOR_COLL_LANGCHAIN
+from config.config import GEMINI_API_KEY
 
 # Hardcoded credentials
 VALID_CREDENTIALS = {
@@ -68,45 +68,26 @@ if not check_authentication():
     login_page()
     st.stop()
 
-client = get_mongo_client(app_name="web_content_embedding")
-db = get_mongo_db(client)
-collection = db[MONGODB_VECTOR_COLL_LANGCHAIN]
+mongo_client = get_mongo_client(app_name="web_content_embedding")
+db = get_mongo_db(mongo_client)
+collection = db["scraped_data"]
 
-# Configure Gemini API
-genai.configure(api_key=GEMINI_API_KEY)
-
-model = genai.GenerativeModel("gemini-2.5-flash")
-
-def get_gemini_embedding(text):
-    """Get embeddings using Gemini's embedding model (768 dimensions)"""
-    try:
-        result = genai.embed_content(
-            model="models/text-embedding-004",
-            content=text,
-            task_type="retrieval_query"
-        )
-        return result['embedding']
-    except Exception as e:
-        print(f"Error generating Gemini embedding: {e}")
-        return None
+# Configure Gemini API (LLM only — embeddings handled by MongoDB autoEmbed)
+genai_client = genai.Client(api_key=GEMINI_API_KEY)
 
 def get_chat_response(query, chat_history=None):
-    embeddings = get_gemini_embedding(query)
-    
-    if embeddings is None:
-        yield "Error: Could not generate embeddings for your query."
-        return
-    
-    # Enhanced vector search to capture more email content
+    # MongoDB autoEmbed generates embeddings server-side from the query text
     results = collection.aggregate([
         {
             "$vectorSearch": {
                 "index": "vector_index",
-                "path": "embedding",
-                "queryVector": embeddings,
-                "numCandidates": 100,  # Consider more candidates to find email content
-                "limit": 15,  # Retrieve more results initially for better prioritization
-                "exact": False  # Use approximate search for better performance
+                "path": "combined_text",
+                "query": {
+                    "text": query
+                },
+                "numCandidates": 100,
+                "limit": 15,
+                "exact": False
             }
         },
         {
@@ -117,12 +98,7 @@ def get_chat_response(query, chat_history=None):
             }
         },
         {
-            "$match": {
-                "similarity_score": {"$gte": 0.6}  # Slightly lower threshold to capture more email content
-            }
-        },
-        {
-            "$limit": 8  # Take more results for better email prioritization
+            "$limit": 8
         }
     ])
 
@@ -142,12 +118,12 @@ def get_chat_response(query, chat_history=None):
         source_info = source_mapping.get(source_type, {'display': 'School Resource', 'priority': 3})
         
         doc_info = {
-            "content": result['content'],
+            "content": result.get('combined_text', result.get('content', '')),
             "score": result.get('similarity_score', 0),
             "source": source_type,
             "source_display": source_info['display'],
             "priority": source_info['priority'],
-            "source_id": str(result.get('source_document_id', ''))
+            "source_id": str(result.get('source_document_id', result.get('_id', '')))
         }
         relevant_docs.append(doc_info)
     
@@ -262,18 +238,10 @@ For the most current information, you may want to contact [contact method if ava
 **Your Response:**"""
 
     try:
-        response = model.generate_content(
-            prompt,
-            # generation_config=genai.types.GenerationConfig(
-            #     max_output_tokens=800,  # Increased for more comprehensive responses
-            #     temperature=0.2,  # Slightly higher for more natural language while maintaining accuracy
-            #     top_p=0.9,  # Higher top_p for better coherence and flow
-            #     top_k=40,  # Add top_k for more controlled generation
-            # ),
-            stream=True
-        )
-        
-        for chunk in response:
+        for chunk in genai_client.models.generate_content_stream(
+            model="gemini-2.5-flash",
+            contents=prompt
+        ):
             if chunk.text:
                 yield chunk.text
     except Exception as e:

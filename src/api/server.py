@@ -4,8 +4,6 @@ import re
 import sys
 import datetime
 from langchain_community.document_loaders import PyPDFLoader
-from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain.schema import Document
 from PIL import Image
 import pytesseract
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -13,10 +11,9 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from utils.mongo_utils import get_mongo_client, get_mongo_db
 from utils.text_utils import remove_extra_lines_from_string
-from utils.gemini_utils import get_gemini_embeddings
-from utils.text_processing_utils import preprocess_text_for_embeddings, improve_chunk_quality, extract_keywords
+from utils.text_processing_utils import preprocess_text_for_embeddings
 
-from config.config import MONGODB_VECTOR_COLL_LANGCHAIN, PORT
+from config.config import PORT
 
 app = Flask(__name__)
 
@@ -38,78 +35,28 @@ def extract_text(file_path, file_ext):
     return None
 
 def process_text_content(text_content, source_name, source_type="email_body"):
-    """Process text content following the improved scraping logic sequence: clean -> preprocess -> embed -> save"""
+    """Clean and save text to scraped_data. MongoDB autoEmbed handles vector indexing."""
     if not text_content or not text_content.strip():
         return {"error": "No text content provided"}, 400
-    
-    # Step 1: Initial cleaning (processing.py logic)
+
+    # Step 1: Initial cleaning
     cleaned_text = remove_extra_lines_from_string(text_content)
-    
-    # Step 2: Enhanced preprocessing for better embedding quality
-    processed_text = preprocess_text_for_embeddings(cleaned_text)
-    
-    # Step 3: Combine text (already done since we have single text - combine.py logic)
-    combined_text = processed_text
-    
-    # Save the document with processed text to scraped_data collection
-    document_id = db.scraped_data.insert_one({
-        "email_body_source" if source_type == "email_body" else "email_attachment_url": source_name, 
+
+    # Step 2: Enhanced preprocessing
+    combined_text = preprocess_text_for_embeddings(cleaned_text)
+
+    # Step 3: Save to scraped_data — MongoDB autoEmbed indexes combined_text automatically
+    db.scraped_data.insert_one({
+        "email_body_source" if source_type == "email_body" else "email_attachment_url": source_name,
         "combined_text": combined_text,
-        "raw_text": text_content,  # Keep original for reference
+        "raw_text": text_content,
         "datetime": datetime.datetime.now(),
         "source": source_type,
-        "processing_version": "v2.0"
-    }).inserted_id
-    
-    # Step 4: Generate embeddings using improved chunking strategy
-    text_splitter = improve_chunk_quality(
-        combined_text, 
-        chunk_size=800,  # Slightly smaller for better semantic coherence
-        chunk_overlap=150
-    )
-    
-    document_obj = Document(page_content=combined_text)
-    chunks = text_splitter.split_documents([document_obj])
-    
-    # Get embeddings for all chunks
-    chunk_texts = [chunk.page_content for chunk in chunks]
-    embeddings = get_gemini_embeddings(chunk_texts)
-    
-    # Step 5: Save embeddings to vector collection with enhanced metadata
-    successful_chunks = min(len(chunks), len(embeddings))
-    
-    for i in range(successful_chunks):
-        chunk = chunks[i]
-        embedding = embeddings[i]
-        
-        # Extract keywords for better searchability
-        keywords = extract_keywords(chunk.page_content)
-        
-        # Enhanced document structure with better metadata
-        chunk_doc = {
-            "content": chunk.page_content,
-            "content_raw": text_content[chunk.metadata.get('start_index', 0):chunk.metadata.get('start_index', 0) + len(chunk.page_content)] if chunk.metadata.get('start_index') else chunk.page_content,
-            "embedding": embedding,
-            "datetime": datetime.datetime.now(),
-            "source_document_id": document_id,
-            "embedding_model": "gemini-text-embedding-004-improved",
-            "embedding_dimensions": len(embedding),
-            "chunk_index": i,
-            "total_chunks": len(chunks),
-            "chunk_size": len(chunk.page_content),
-            "source": source_type,
-            "source_url": source_name,
-            "content_preview": chunk.page_content[:100] + "..." if len(chunk.page_content) > 100 else chunk.page_content,
-            "keywords": keywords,
-            "processing_version": "v2.0",
-            "chunk_metadata": chunk.metadata
-        }
-        
-        db[MONGODB_VECTOR_COLL_LANGCHAIN].insert_one(chunk_doc)
-    
-    print(f"Processed {successful_chunks} improved chunks for {source_type}: {source_name}")
-    
-    return {"source": source_name, "chunks_processed": successful_chunks, "processing_version": "v2.0"}, 200
+        "processing_version": "v3.0"
+    })
+
+    print(f"Saved {source_type}: {source_name}")
+    return {"source": source_name, "status": "saved", "processing_version": "v3.0"}, 200
 
 def process_file(file):
     """Process file following the scraping logic sequence: extract -> clean -> combine -> embed -> save"""
